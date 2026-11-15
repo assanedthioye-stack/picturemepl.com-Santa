@@ -5,7 +5,7 @@ Cloud web app for Santa photo sessions (Senegal, Côte d'Ivoire, Benin). Design:
 ## Run
 ```bash
 npm install
-PINS='{"host":"1111","photographer":"2222","cashier":"3333","monitor":"4444","admin":"9999"}' node server/index.js
+PINS='{"host":"1111","photographer":"2222","cashier":"3333","monitor":"4444","admin":"9999"}' node server/main.js
 ```
 Env: `PINS` (required, one PIN per role), `PORT` (default 3000), `DATA_DIR` (default `./data`, holds `app.db` and `photos/`).
 
