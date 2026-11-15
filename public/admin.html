@@ -1,12 +1,16 @@
 <!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Picture Me Please</title><link rel="stylesheet" href="/style.css"></head><body><main>
 <div class="top"><h1>Admin</h1><button class="alt" onclick="toggleLang()" data-t="lang"></button></div>
 <p><a class="btn" href="/dashboard.html" data-t="dash"></a></p>
+<div class="card"><h2 data-t="mall"></h2><input id="mname" data-tp="name"><select id="mcountry"><option value="SN">Sénégal</option><option value="CI">Côte d'Ivoire</option><option value="BJ">Bénin</option></select><button id="addmall" data-t="save"></button><p id="mmsg"></p><small>ID: <span id="mids"></span></small></div>
 <div class="card"><h2 data-t="admin_slots"></h2><input id="start" type="datetime-local"><input id="cap" type="number" data-tp="capacity" value="4"><button id="addslot" data-t="save"></button><p id="smsg"></p></div>
 <div class="card"><h2 data-t="prices"></h2><select id="pc"><option>SN</option><option>CI</option><option>BJ</option></select><select id="pi"></select><input id="pa" type="number" data-tp="amount"><button id="sp" data-t="save"></button><p id="pmsg"></p></div>
 <div class="card"><h2 data-t="sales"></h2><input id="sd" type="date"><div id="sales"></div></div>
 </main><script src="/app.js"></script><script>
 $('#sd').value = new Date().toISOString().slice(0, 10);
 $('#pi').innerHTML = ['essentiel','famille','prestige','numerique','print_8x10','print_5x7','print_4x6','wallet','digital'].map((i) => `<option>${i}</option>`).join('');
+$('#addmall').onclick = async () => { try { await api('POST', '/api/admin/malls', { name: $('#mname').value, country: $('#mcountry').value }); $('#mmsg').textContent = 'OK'; malls(); } catch (e) { $('#mmsg').textContent = errText(e.message); } };
+async function malls() { $('#mids').textContent = (await (await fetch('/api/malls')).json()).map((m) => `${m.id}=${m.name}`).join(', '); }
+malls();
 $('#addslot').onclick = async () => { try { await api('POST', '/api/admin/slots', { mall, startAt: $('#start').value + ':00Z', capacity: $('#cap').value }); $('#smsg').textContent = 'OK'; } catch (e) { $('#smsg').textContent = errText(e.message); } };
 $('#sp').onclick = async () => { try { await api('PUT', '/api/admin/prices', { country: $('#pc').value, item: $('#pi').value, amount: +$('#pa').value }); $('#pmsg').textContent = 'OK'; } catch (e) { $('#pmsg').textContent = errText(e.message); } };
 async function sales() { try { const s = await api('GET', `/api/admin/sales?mall=${mall}&day=${$('#sd').value}`);

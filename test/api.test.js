@@ -74,6 +74,14 @@ test('csv export is admin-only and downloads as a file', async () => {
   assert.equal((await call('GET', '/api/admin/export?type=orders&from=bad&to=x', null, 'a1')).status, 400);
   srv.close();
 });
+test('admin can add a mall; others cannot; bad country rejected', async () => {
+  const { srv, call } = await boot();
+  assert.equal((await call('POST', '/api/admin/malls', { name: 'Sea Plaza', country: 'SN' }, 'h1')).status, 401);
+  assert.equal((await call('POST', '/api/admin/malls', { name: 'Sea Plaza', country: 'XX' }, 'a1')).status, 400);
+  assert.equal((await call('POST', '/api/admin/malls', { name: 'Sea Plaza', country: 'SN' }, 'a1')).status, 200);
+  assert.equal((await call('GET', '/api/malls')).json.length, 2);
+  srv.close();
+});
 test('upload with no active family is a clear 409', async () => {
   const { srv, call } = await boot();
   const r = await call('POST', '/api/photos?mall=1&name=a.jpg', null, 'p1', 'x');

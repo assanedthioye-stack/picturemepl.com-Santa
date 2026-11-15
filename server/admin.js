@@ -20,4 +20,8 @@ function addSlot(db, mallId, startAt, capacity) {
   if (isNaN(Date.parse(startAt)) || !(capacity > 0)) throw new Error('bad slot');
   db.prepare('INSERT INTO slots(mall_id,start_at,capacity) VALUES(?,?,?)').run(mallId, new Date(startAt).toISOString(), capacity);
 }
-module.exports = { dailySales, setPrice, addSlot };
+function addMall(db, name, country) {
+  if (!String(name || '').trim() || !['SN', 'CI', 'BJ'].includes(country)) throw new Error('bad mall');
+  db.prepare('INSERT INTO malls(name,country) VALUES(?,?)').run(String(name).trim(), country);
+}
+module.exports = { dailySales, setPrice, addSlot, addMall };

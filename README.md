@@ -12,11 +12,9 @@ Env: `PINS` (required, one PIN per role), `PORT` (default 3000), `DATA_DIR` (def
 ## Pages
 `/book.html` (public), `/host.html?mall=1`, `/photographer.html?mall=1`, `/monitor.html?mall=1`, `/cashier.html?mall=1`, `/admin.html?mall=1`, `/dashboard.html` (admin PIN; KPIs filtered per country, default Senegal). Staff pages ask for their role's PIN (admin PIN works everywhere).
 
-## Seed a mall (once)
-```bash
-node -e "const {openDb}=require('./server/db');const d=openDb('data/app.db');d.prepare(\"INSERT INTO malls(name,country) VALUES('Sea Plaza','SN')\").run()"
-```
-Then add slots from the admin page (times are entered and shown in UTC).
+## Add a mall
+On the admin page (`/admin.html`): add the mall, note its ID, then open pages with `?mall=<ID>`.
+Add slots from the admin page (times are entered and shown in UTC).
 
 ## At the mall
 - Photographer laptop: `node tools/uploader.js <cameraFolder> <serverUrl> <photographerPin> <mallId>`
