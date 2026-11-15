@@ -31,7 +31,8 @@ async function ingest(db, dir, mallId, filename, bytes, expectedCode) {
   fs.mkdirSync(path.join(dir, f.code), { recursive: true });
   fs.writeFileSync(path.join(dir, f.code, file), bytes);
   fs.writeFileSync(path.join(dir, f.code, previewName(file)), preview);
-  db.prepare('INSERT INTO photos(code,file,created_at) VALUES(?,?,?)').run(f.code, file, new Date().toISOString());
+  const by = db.prepare("SELECT name FROM presence WHERE mall_id=? AND role='photographer'").get(mallId)?.name || null; // who is signed in at the camera
+  db.prepare('INSERT INTO photos(code,file,created_at,photographer) VALUES(?,?,?,?)').run(f.code, file, new Date().toISOString(), by);
   return { code: f.code, file };
 }
 

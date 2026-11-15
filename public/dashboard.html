@@ -1,7 +1,7 @@
 <!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Picture Me Please</title><link rel="stylesheet" href="/style.css">
 <style>.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}.tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}.tile b{display:block;font-size:1.5rem}.tile span{font-size:.85rem;opacity:.75}
 .bar{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:.9rem}.bar i{display:block;height:14px;background:var(--acc);border-radius:4px;min-width:2px}.bar em{font-style:normal;min-width:84px}.bar u{text-decoration:none;opacity:.8;white-space:nowrap}
-.filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}.filters>*{min-width:0}table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px solid var(--line);text-align:right}td:first-child,th:first-child{text-align:left}main{max-width:900px}</style></head>
+.filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}.filters>*{min-width:0}table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px solid var(--line);text-align:right}td:first-child,th:first-child{text-align:left}main{max-width:900px}.tw{overflow-x:auto}h3{font-size:1rem;margin:1em 0 .3em}</style></head>
 <body><main>
 <div class="top"><h1 data-t="dash"></h1><button class="alt" onclick="toggleLang()" data-t="lang"></button></div>
 <div class="card filters"><select id="country"><option value="SN">Sénégal</option><option value="CI">Côte d'Ivoire</option><option value="BJ">Bénin</option><option value="" data-t="all"></option></select><div><label data-t="from"></label><input id="from" type="date"></div><div><label data-t="to"></label><input id="to" type="date"></div></div>
@@ -14,7 +14,7 @@
 <div class="card"><h2 data-t="mix"></h2><div id="mix"></div><p><span data-t="discounts"></span>: <b id="disc"></b></p></div>
 <div class="card"><h2 data-t="pay_split"></h2><div id="pay"></div></div>
 <div class="card"><button id="x1" data-t="export_orders"></button> <button class="alt" id="x2" data-t="export_daily"></button> <small data-t="export_hint"></small></div>
-<div class="card"><h2 data-t="cashiers"></h2><table id="cash"></table></div>
+<div class="card"><h2 data-t="team"></h2><h3 data-t="on_duty"></h3><div id="duty"></div><h3 data-t="r_host"></h3><div class="tw"><table id="thost"></table></div><h3 data-t="r_photographer"></h3><div class="tw"><table id="tphoto"></table></div><h3 data-t="r_cashier"></h3><div class="tw"><table id="tcash"></table></div></div>
 </main><script src="/app.js"></script><script>
 const today = new Date(); const ago = new Date(+today - 6 * 86400000);
 $('#to').value = today.toISOString().slice(0, 10); $('#from').value = ago.toISOString().slice(0, 10);
@@ -62,7 +62,12 @@ async function load() {
   $('#mix').innerHTML = bars(Object.entries(d.items).map(([k, v]) => [t(k), v]), String);
   $('#disc').textContent = d.discountedLines;
   $('#pay').innerHTML = bars([...Object.entries(d.byMethod).map(([k, v]) => [t(k), v]), ...Object.entries(d.byProvider)]);
-  $('#cash').innerHTML = `<tr><th></th><th>${t('cash')}</th><th>${t('mobile_money')}</th></tr>` + Object.entries(d.byCashier).map(([c, x]) => `<tr><td>${esc(c)}</td><td>${xof(x.cash)}</td><td>${xof(x.mobile_money)}</td></tr>`).join('');
+  const table = (id, heads, rows) => { $(id).innerHTML = rows.length ? `<tr><th></th>${heads.map((h) => `<th>${esc(t(h))}</th>`).join('')}</tr>` + rows.map((r) => `<tr>${r.map((v, i) => `<td>${i ? v : esc(v)}</td>`).join('')}</tr>`).join('') : '<tr><td>—</td></tr>'; };
+  const tm = d.team;
+  $('#duty').innerHTML = tm.onDuty.map((x) => `<div class="item"><span>${esc(x.mall)} · ${esc(t('r_' + x.role))} : <b>${esc(x.name)}</b></span><span>${new Date(x.seen_at).toLocaleString(LANG, { dateStyle: 'short', timeStyle: 'short' })}</span></div>`).join('') || '—';
+  table('#thost', ['t_checkins', 't_walkins', 't_served'], tm.hosts.map((h) => [h.name, h.checkins, h.walkins, h.served]));
+  table('#tphoto', ['t_families', 't_photos', 't_avg', 't_sales', 'revenue'], tm.photographers.map((p) => [p.name, p.families, p.photos, p.avgPhotos, p.sales, xof(p.revenue)]));
+  table('#tcash', ['orders', 'revenue', 'cash', 'mobile_money', 'avg_order'], tm.cashiers.map((c) => [c.name, c.orders, xof(c.revenue), xof(c.cash), xof(c.mobile_money), xof(c.avgOrder)]));
 }
 ['country', 'from', 'to'].forEach((i) => ($('#' + i).onchange = load));
 window.render = load; applyI18n(); load(); setInterval(load, 30000);

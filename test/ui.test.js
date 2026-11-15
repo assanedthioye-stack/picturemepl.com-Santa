@@ -36,7 +36,7 @@ test('family books, host checks in, photo, monitor picks Famille, cashier takes 
     if (process.env.SHOTS) await book.screenshot({ path: process.env.SHOTS + '/book.png' });
 
     const host = await open('/host.html?mall=1', 'h111');
-    await host.fill('#code', code); await host.click('#ci');
+    await host.fill('#staff', 'Fatou'); await host.fill('#code', code); await host.click('#ci');
     await host.waitForSelector('#msg.good');
     await host.click('#next');
     await host.waitForSelector('.q.serving');
@@ -231,5 +231,32 @@ test('after a paid digital sale the cashier shows a QR; the family page download
     await fam.goto(url);
     const [dl] = await Promise.all([fam.waitForEvent('download'), fam.click('a[download]')]);
     assert.ok(fs.readFileSync(await dl.path()).equals(original));
+  } finally { await browser.close(); srv.close(); }
+});
+
+test('dashboard shows the team: who is on duty and what each host, photographer and cashier did', async () => {
+  const { addWalkIn, serveNext, setPresence } = require('../server/queue');
+  const { saveCart, pay } = require('../server/orders');
+  const db = openDb();
+  db.prepare("INSERT INTO malls(id,name,country) VALUES(1,'Dakar','SN')").run();
+  const code = addWalkIn(db, 1, { name: 'A', phone: '', consent: true, staff: 'Fatou' }).code;
+  setPresence(db, 1, 'photographer', 'Awa');
+  serveNext(db, 1, { staff: 'Fatou' });
+  db.prepare("INSERT INTO photos(code,file,photographer) VALUES(?,'1_a.jpg','Awa')").run(code);
+  saveCart(db, code, [{ item: 'famille', qty: 1 }], ['1_a.jpg']);
+  pay(db, code, { method: 'cash', amountReceived: 10000, expectedTotal: 10000, cashier: 'Amy' });
+  const srv = createServer({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
+  await new Promise((r) => srv.listen(0, r));
+  const browser = await chromium.launch();
+  try {
+    const p = await browser.newPage({ viewport: { width: 390, height: 1200 } });
+    p.on('dialog', (d) => d.accept('a111'));
+    await p.goto('http://localhost:' + srv.address().port + '/dashboard.html');
+    await p.waitForSelector('#thost td');
+    for (const [sel, name] of [['#thost', 'Fatou'], ['#tphoto', 'Awa'], ['#tcash', 'Amy']]) assert.ok((await p.textContent(sel)).includes(name), sel);
+    const duty = await p.textContent('#duty');
+    assert.ok(duty.includes('Fatou') && duty.includes('Awa') && duty.includes('Amy'));
+    assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true); // no sideways scroll on a phone
+    if (process.env.SHOTS) await p.locator('#duty').locator('xpath=..').screenshot({ path: process.env.SHOTS + '/team.png' });
   } finally { await browser.close(); srv.close(); }
 });

@@ -3,6 +3,7 @@ const { priceOrder } = require('./pricing');
 const { priceMap, tx } = require('./db');
 const { gallery } = require('./photos');
 const { cleanText } = require('./booking');
+const { setPresence } = require('./queue');
 
 const PROVIDERS = { SN: ['Orange Money', 'Wave'], CI: ['Orange Money', 'Wave'], BJ: ['MTN MoMo', 'Celtiis Cash'] };
 const DIGITAL = ['digital', 'essentiel', 'famille', 'prestige', 'numerique']; // items that include a digital file
@@ -60,6 +61,8 @@ function pay(db, code, /** @type {any} */ p, now = new Date()) {
       print_state='ready', download_expires_at=?, download_token=? WHERE code=?`)
       .run(JSON.stringify(lines), total, p.method, momo ? p.provider : null, momo ? reference : null,
         momo ? total : p.amountReceived, now.toISOString(), cashier, new Date(+now + 30 * DAY).toISOString(), token, o.code);
+    const mall = db.prepare('SELECT mall_id FROM queue WHERE code=?').get(o.code);
+    if (mall) setPresence(db, mall.mall_id, 'cashier', cashier, now);
     return { total };
   });
 }

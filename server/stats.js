@@ -36,7 +36,7 @@ function dashboard(db, { country = '', from, to, now = new Date() }) {
   const byMall = Object.entries(sum(paid, 'mall')).map(([mall, t]) => ({ mall, total: t, orders: ordersByMall[mall] }));
   const revBy = sum(paid, 'day'), ordersBy = tally(paid, 'day');
 
-  const q = db.prepare(`SELECT q.kind, q.checked_in_at, q.served_at, m.country FROM queue q JOIN malls m ON m.id=q.mall_id
+  const q = db.prepare(`SELECT q.code, q.booking_id, q.checked_in_by, q.served_by, q.kind, q.checked_in_at, q.served_at, m.country FROM queue q JOIN malls m ON m.id=q.mall_id
     WHERE (? = '' OR m.country = ?)`).all(...c)
     .map((r) => ({ ...r, day: localDay(r.checked_in_at, r.country), servedDay: r.served_at && localDay(r.served_at, r.country) }))
     .filter((r) => inRange(r.day, from, to));
@@ -57,8 +57,36 @@ function dashboard(db, { country = '', from, to, now = new Date() }) {
   const peakHours = Array(24).fill(0); // arrivals by local hour
   for (const r of q) peakHours[+local(r.checked_in_at, r.country).slice(11, 13)]++;
 
+  // Team: who did what. Actions recorded without a name are grouped under "—" so nothing disappears.
+  const who = (n) => n || '—';
+  const byName = (o) => Object.values(o).sort((x, y) => x.name.localeCompare(y.name));
+  const hosts = {}, shooters = {}, tills = {};
+  const host = (n) => (hosts[who(n)] ||= { name: who(n), checkins: 0, walkins: 0, served: 0 });
+  for (const r of q) {
+    host(r.checked_in_by)[r.booking_id ? 'checkins' : 'walkins']++;
+    if (r.served_at) host(r.served_by).served++;
+  }
+  const paidByCode = new Map(paid.map((o) => [o.code, o]));
+  const inQ = new Set(q.map((r) => r.code));
+  const shots = db.prepare('SELECT code, photographer, COUNT(*) n FROM photos GROUP BY code, photographer').all().filter((p) => inQ.has(p.code));
+  for (const p of shots) {
+    const s = (shooters[who(p.photographer)] ||= { name: who(p.photographer), families: 0, photos: 0, avgPhotos: 0, sales: 0, revenue: 0 });
+    s.families++; s.photos += p.n;
+    const o = paidByCode.get(p.code);
+    if (o) { s.sales++; s.revenue += o.total; }
+  }
+  for (const s of Object.values(shooters)) s.avgPhotos = Math.round((s.photos / s.families) * 10) / 10;
+  for (const o of paid) {
+    const till = (tills[who(o.cashier)] ||= { name: who(o.cashier), orders: 0, revenue: 0, cash: 0, mobile_money: 0, avgOrder: 0 });
+    till.orders++; till.revenue += o.total; till[o.method] += o.total; till.avgOrder = Math.round(till.revenue / till.orders);
+  }
+  const ROLE_ORDER = ['host', 'photographer', 'cashier'];
+  const onDuty = db.prepare(`SELECT m.name mall, p.role, p.name, p.seen_at FROM presence p JOIN malls m ON m.id=p.mall_id
+    WHERE (? = '' OR m.country = ?)`).all(...c).sort((x, y) => x.mall.localeCompare(y.mall) || ROLE_ORDER.indexOf(x.role) - ROLE_ORDER.indexOf(y.role));
+  const team = { hosts: byName(hosts), photographers: byName(shooters), cashiers: byName(tills), onDuty };
+
   return {
-    trend, peakHours,
+    trend, peakHours, team,
     revenue: { total, orders: paid.length, avgOrder: paid.length ? Math.round(total / paid.length) : 0 },
     byDay: days.filter((d) => revBy[d]).map((day) => ({ day, total: revBy[day] })), byMall, byMethod: sum(paid, 'method'),
     byProvider: sum(paid.filter((o) => o.provider), 'provider'), byCashier, items, discountedLines,

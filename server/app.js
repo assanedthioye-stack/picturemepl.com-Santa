@@ -77,11 +77,16 @@ function createServer({ db, dir, pins, log = console.error }) {
       return out;
     }],
     'POST /api/cancel': [null, async ({ req }) => { booking.cancel(db, (await json(req)).code); return {}; }],
-    'POST /api/checkin': [['host'], async ({ req }) => { const b = await json(req); return queue.checkIn(db, b.code, new Date(), mallById(db, int(b.mall)).id); }],
+    'POST /api/checkin': [['host'], async ({ req }) => { const b = await json(req); return queue.checkIn(db, b.code, new Date(), mallById(db, int(b.mall)).id, b.staff); }],
     'POST /api/walkin': [['host'], async ({ req }) => { const b = await json(req); return queue.addWalkIn(db, int(b.mall), b); }],
     'GET /api/queue': [['host'], ({ q }) => queue.getQueue(db, mallById(db, int(q('mall'))).id)],
     'GET /api/active': [['monitor', 'photographer', 'host', 'cashier'], ({ q }) => queue.active(db, mallById(db, int(q('mall'))).id)],
-    'POST /api/next': [['host'], async ({ req }) => { const b = await json(req); return queue.serveNext(db, int(b.mall), { force: b.force === true }); }],
+    'POST /api/next': [['host'], async ({ req }) => { const b = await json(req); return queue.serveNext(db, int(b.mall), { force: b.force === true, staff: b.staff }); }],
+    'POST /api/staff': [['photographer'], async ({ req }) => { // the photographer signs in, so their photos are credited to them
+      const b = await json(req);
+      if (!queue.setPresence(db, mallById(db, int(b.mall)).id, 'photographer', b.name)) throw new Error('name required');
+      return {};
+    }],
     'POST /api/photos': [['photographer'], async ({ req, q }) => {
       const mall = mallById(db, int(q('mall'))).id;
       const serving = queue.active(db, mall)?.code; // read BEFORE the slow body, so a shot can't land on the next family
