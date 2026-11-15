@@ -93,6 +93,7 @@ function createServer({ db, dir, pins, log = console.error }) {
     'POST /api/pay': [['cashier'], async ({ req }) => { const b = await json(req); return orders.pay(db, b.code, b); }],
     'GET /api/print/next': [['printer'], ({ q }) => orders.nextPrintJob(db, mallById(db, int(q('mall'))).id)],
     'POST /api/print/done': [['printer'], async ({ req }) => { orders.markPrinted(db, (await json(req)).code); return {}; }],
+    'GET /api/delivery': [['cashier'], ({ q, origin }) => { const d = orders.deliveryFor(db, q('code')); return { ...d, url: `${origin}/get.html#${d.token}` }; }],
     'GET /api/admin/files': [[], ({ q }) => orders.adminFiles(db, q('code'))],
     'PUT /api/admin/prices': [[], async ({ req }) => { const b = await json(req); admin.setPrice(db, b.country, b.item, b.amount); return {}; }],
     'POST /api/admin/malls': [[], async ({ req }) => { const b = await json(req); admin.addMall(db, b.name, b.country); return {}; }],
@@ -121,7 +122,10 @@ function createServer({ db, dir, pins, log = console.error }) {
         throw new Error('pin');
       };
       const route = routes[`${req.method} ${u.pathname}`];
-      if (route) { allowed(route[0]); return send(200, await route[1]({ req, q, ip })); }
+      // Public address of this site, for the family link. Hosting puts the real scheme in x-forwarded-proto.
+      const host = /^[\w.:-]{1,100}$/.test(String(req.headers.host || '')) ? req.headers.host : 'localhost';
+      const origin = `${String(req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim() === 'https' ? 'https' : 'http'}://${host}`;
+      if (route) { allowed(route[0]); return send(200, await route[1]({ req, q, ip, origin })); }
 
       if (req.method === 'GET') {
         let m;
@@ -140,8 +144,8 @@ function createServer({ db, dir, pins, log = console.error }) {
           const data = type === 'daily' ? exp.dailyCsv(db, o) : exp.ordersCsv(db, o);
           return send(200, data, 'text/csv; charset=utf-8', { 'content-disposition': `attachment; filename="${type}_${o.country || 'all'}_${o.from}_${o.to}.csv"` });
         }
-        // Pictures. Screens only ever get the watermarked preview. The clean original goes to the admin, and to the
-        // printer once payment is confirmed. There is no public download.
+        // Pictures. Screens only ever get the watermarked preview. The clean original goes to the admin, to the printer
+        // once payment is confirmed, and to the family through the private link of a paid digital order. No staff PIN can fetch one.
         if ((m = u.pathname.match(/^\/preview\/(\w{1,16})\/([\w.-]{1,200})$/))) {
           allowed(['monitor', 'cashier', 'host']);
           return send(200, await photos.read(db, dir, m[1], m[2]), 'image/jpeg');
@@ -149,6 +153,19 @@ function createServer({ db, dir, pins, log = console.error }) {
         if ((m = u.pathname.match(/^\/photo\/(\w{1,16})\/([\w.-]{1,200})$/))) {
           allowed([]);
           return send(200, await photos.read(db, dir, m[1], m[2], { clean: true }), MIME[path.extname(m[2]).toLowerCase()], { 'content-disposition': `attachment; filename="${m[2]}"` });
+        }
+        if (u.pathname === '/api/delivery-qr') { // QR of the family link, shown on the cashier screen
+          allowed(['cashier']);
+          return send(200, await QRCode.toString(`${origin}/get.html#${orders.deliveryFor(db, q('code')).token}`, { type: 'svg', margin: 1 }), 'image/svg+xml');
+        }
+        if ((m = u.pathname.match(/^\/api\/delivery\/([0-9a-f]{32})$/))) {
+          const d = orders.delivery(db, m[1]);
+          return send(200, { files: d.files, expires: d.expires });
+        }
+        if ((m = u.pathname.match(/^\/delivery\/([0-9a-f]{32})\/([\w.-]{1,200})$/))) { // the family's own purchased photo
+          const d = orders.delivery(db, m[1]);
+          if (!d.files.includes(m[2])) throw new Error('not found');
+          return send(200, await photos.read(db, dir, d.code, m[2], { clean: true }), MIME[path.extname(m[2]).toLowerCase()], { 'content-disposition': `attachment; filename="${m[2]}"` });
         }
         if (u.pathname === '/api/print/file') {
           allowed(['printer']);

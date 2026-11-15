@@ -16,7 +16,7 @@ Staff pages ask for their role's PIN (the admin PIN works everywhere). With seve
 ## Photo protection
 - Every screen (customer monitor, cashier, host) receives only a small watermarked preview (1000 px, `PICTURE ME PLEASE` across the image).
 - The clean original is released only to the admin, and to the printer PIN once payment is confirmed, and only for the photos the family chose.
-- There is no public download link. Digital files are handed over by an admin from the admin page ("Photos d'une famille").
+- No staff PIN can copy or download a picture. When a family pays for a digital item, the cashier screen shows a QR code with a private link (`/get.html#…`, valid 30 days): the family downloads its own purchased photos on its own phone. The admin can also download any original from the admin page.
 - A screenshot of the watermarked preview cannot be prevented by any website.
 
 ## Security notes

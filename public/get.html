@@ -1,0 +1,14 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><meta name="referrer" content="no-referrer"><title>Picture Me Please</title><link rel="stylesheet" href="/style.css"></head><body><main>
+<div class="top"><h1 data-t="get_title"></h1><button class="alt" onclick="toggleLang()" data-t="lang"></button></div>
+<div class="card"><p id="info"></p><div id="list"></div></div>
+</main><script src="/app.js"></script><script>
+const token = location.hash.slice(1);
+let data = null;
+function render() {
+  if (!data) { $('#info').textContent = t('get_gone'); $('#info').className = 'err'; $('#list').innerHTML = ''; return; }
+  $('#info').textContent = `${t('get_until')} ${new Date(data.expires).toLocaleDateString(LANG)}`;
+  $('#list').innerHTML = data.files.map((f, i) => `<p><a class="btn" download href="/delivery/${token}/${encodeURIComponent(f)}">${esc(t('download'))} ${i + 1}</a></p>`).join('');
+}
+window.render = render; applyI18n();
+(/^[0-9a-f]{32}$/.test(token) ? pub('GET', '/api/delivery/' + token) : Promise.reject(new Error('bad'))).then((d) => { data = d; }).catch(() => { data = null; }).finally(render);
+</script></body></html>

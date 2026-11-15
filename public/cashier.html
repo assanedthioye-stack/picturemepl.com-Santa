@@ -7,9 +7,21 @@
 <label class="row"><input type="radio" name="m" value="mobile_money"><span data-t="mobile_money"></span></label>
 <div id="momo" hidden><label data-t="provider"></label><select id="prov"></select><input id="ref" data-tp="reference" maxlength="60"></div>
 <div id="cashf"><input id="recv" type="number" inputmode="numeric" min="0" step="1" data-tp="received"></div>
-<button id="pay" data-t="paid_btn" disabled></button></div><p id="msg"></p></div>
+<button id="pay" data-t="paid_btn" disabled></button></div><p id="msg"></p>
+<div id="deliv" hidden><h2 data-t="deliv_title"></h2><p data-t="deliv_hint"></p><img class="qr" id="dqr" alt="QR"><p class="mono" id="durl" style="word-break:break-all;font-size:.8rem"></p></div></div>
 </main><script src="/app.js"></script><script>
-let order = null, code = '', busy = false;
+let order = null, code = '', busy = false, delivFor = '';
+// After a paid digital sale: show the family their private link as a QR. The cashier shows it; only the family's phone downloads.
+async function delivery() {
+  if (!order || !order.paid) { $('#deliv').hidden = true; delivFor = ''; return; }
+  if (delivFor === code) return;
+  delivFor = code;
+  try { const d = await api('GET', '/api/delivery?code=' + encodeURIComponent(code));
+    const r = await fetch('/api/delivery-qr?code=' + encodeURIComponent(code), { headers: { 'x-pin': getPin() } });
+    if (!r.ok) throw new Error('not found');
+    $('#dqr').src = URL.createObjectURL(await r.blob()); $('#durl').textContent = d.url; $('#deliv').hidden = false; }
+  catch (e) { $('#deliv').hidden = true; } // print-only order: nothing to hand over
+}
 $('#who').value = store.get('cashier') || '';
 const method = () => document.querySelector('input[name=m]:checked').value;
 function valid() {
@@ -21,7 +33,7 @@ document.querySelectorAll('input[name=m]').forEach((r) => (r.onchange = sync));
 ['recv', 'ref', 'who'].forEach((i) => ($('#' + i).oninput = () => { if (i === 'who') store.set('cashier', $('#who').value.trim()); sync(); }));
 function show() {
   $('#o').hidden = !order;
-  if (!order) return;
+  if (!order) { delivery(); return; }
   $('#lines').innerHTML = order.lines.map((l) => `<div class="item"><span>${l.qty}× ${t(l.item)} ${l.discounted ? '<b class="good">' + t('discount') + '</b>' : ''}</span><span>${xof(l.amount)}</span></div>`).join('');
   $('#tot').textContent = t('total') + ' ' + xof(order.total);
   $('#nph').textContent = order.photos ? `${order.photos} ${t('photos_sel')}` : t('e_no photos'); $('#nph').className = order.photos ? '' : 'err';
@@ -29,7 +41,7 @@ function show() {
   if ($('#prov').innerHTML !== list) $('#prov').innerHTML = list;
   $('#payform').hidden = order.paid;
   if (order.paid) { $('#msg').textContent = t('paid') + (order.print_state === 'ready' ? ' · ' + t('printing') : ''); $('#msg').className = 'good'; }
-  sync();
+  sync(); delivery();
 }
 async function load(quiet) {
   const want = $('#code').value.trim().toUpperCase();

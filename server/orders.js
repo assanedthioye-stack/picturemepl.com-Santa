@@ -1,3 +1,4 @@
+const crypto = require('node:crypto');
 const { priceOrder } = require('./pricing');
 const { priceMap, tx } = require('./db');
 const { gallery } = require('./photos');
@@ -53,10 +54,12 @@ function pay(db, code, /** @type {any} */ p, now = new Date()) {
       if (!PROVIDERS[countryOf(db, code)].includes(p.provider) || !reference) throw bad();
     } else throw bad();
     const momo = p.method === 'mobile_money';
+    // A digital purchase gets a private, unguessable link for the family. It is the only way a non-admin receives a clean file.
+    const token = JSON.parse(o.items_json).some((i) => DIGITAL.includes(i.item)) ? crypto.randomBytes(16).toString('hex') : null;
     db.prepare(`UPDATE orders SET lines_json=?, total=?, method=?, provider=?, reference=?, amount_received=?, paid_at=?, cashier=?,
-      print_state='ready', download_expires_at=? WHERE code=?`)
+      print_state='ready', download_expires_at=?, download_token=? WHERE code=?`)
       .run(JSON.stringify(lines), total, p.method, momo ? p.provider : null, momo ? reference : null,
-        momo ? total : p.amountReceived, now.toISOString(), cashier, new Date(+now + 30 * DAY).toISOString(), o.code);
+        momo ? total : p.amountReceived, now.toISOString(), cashier, new Date(+now + 30 * DAY).toISOString(), token, o.code);
     return { total };
   });
 }
@@ -67,6 +70,21 @@ function getOrder(db, code) {
   if (!o || !country) throw new Error('unknown code');
   return { lines: JSON.parse(o.lines_json), total: o.total, photos: JSON.parse(o.files_json).length, paid: !!o.paid_at, method: o.method,
     provider: o.provider, print_state: o.print_state, country };
+}
+
+// The family link of a paid digital order, for the cashier to show. Throws 'not found' when there is none.
+function deliveryFor(db, code, now = new Date()) {
+  const o = db.prepare('SELECT download_token, download_expires_at FROM orders WHERE code=? AND paid_at IS NOT NULL').get(String(code || ''));
+  if (!o || !o.download_token || !download(db, code, now)) throw new Error('not found');
+  return { token: o.download_token, expires: o.download_expires_at };
+}
+
+// What a family link gives access to: the photos they bought, until the link expires.
+function delivery(db, token, now = new Date()) {
+  const o = /^[0-9a-f]{32}$/.test(String(token)) ? db.prepare('SELECT code, download_expires_at FROM orders WHERE download_token=?').get(token) : null;
+  const files = o && download(db, o.code, now);
+  if (!files) throw new Error('not found');
+  return { code: o.code, files, expires: o.download_expires_at };
 }
 
 // Photos of an order whose payment is confirmed: the only files the printer may fetch clean.
@@ -100,4 +118,4 @@ function download(db, code, now = new Date()) {
   const hasDigital = JSON.parse(o.items_json).some((i) => DIGITAL.includes(i.item));
   return hasDigital ? JSON.parse(o.files_json) : null; // print-only orders bought no digital file
 }
-module.exports = { saveCart, pay, getOrder, paidFiles, adminFiles, nextPrintJob, markPrinted, download, PROVIDERS };
+module.exports = { saveCart, pay, getOrder, deliveryFor, delivery, paidFiles, adminFiles, nextPrintJob, markPrinted, download, PROVIDERS };

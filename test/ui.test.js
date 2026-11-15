@@ -200,3 +200,36 @@ test('with several malls a staff page asks which mall once, then remembers it', 
     assert.equal(await p.locator('button[data-mall]').count(), 0);
   } finally { await browser.close(); srv.close(); }
 });
+
+test('after a paid digital sale the cashier shows a QR; the family page downloads the clean photo', async () => {
+  const { addWalkIn, serveNext } = require('../server/queue');
+  const { saveCart } = require('../server/orders');
+  const db = openDb();
+  db.prepare("INSERT INTO malls(id,name,country) VALUES(1,'Dakar','SN')").run();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-'));
+  const srv = createServer({ db, dir, pins: PINS });
+  await new Promise((r) => srv.listen(0, r));
+  const base = 'http://localhost:' + srv.address().port;
+  const code = addWalkIn(db, 1, { name: 'A', phone: '', consent: true }).code;
+  serveNext(db, 1);
+  const original = await jpeg();
+  const up = await (await fetch(base + '/api/photos?mall=1&name=a.jpg', { method: 'POST', headers: { 'x-pin': 'p111' }, body: original })).json();
+  saveCart(db, code, [{ item: 'numerique', qty: 1 }], [up.file]);
+  const browser = await chromium.launch();
+  try {
+    const ctx = await browser.newContext({ acceptDownloads: true });
+    const cash = await ctx.newPage();
+    cash.on('dialog', (d) => d.accept('c111'));
+    await cash.goto(base + '/cashier.html');
+    await cash.waitForSelector('#o:not([hidden])');
+    assert.equal(await cash.isVisible('#deliv'), false); // nothing to hand over before payment
+    await cash.fill('#who', 'Amy'); await cash.fill('#recv', '5000'); await cash.click('#pay');
+    await cash.waitForSelector('#deliv:not([hidden])');
+    const url = await cash.textContent('#durl');
+    assert.equal(await cash.locator('a[download]').count(), 0); // the cashier screen itself offers no download
+    const fam = await browser.newPage(); // the family's phone: no PIN at all
+    await fam.goto(url);
+    const [dl] = await Promise.all([fam.waitForEvent('download'), fam.click('a[download]')]);
+    assert.ok(fs.readFileSync(await dl.path()).equals(original));
+  } finally { await browser.close(); srv.close(); }
+});

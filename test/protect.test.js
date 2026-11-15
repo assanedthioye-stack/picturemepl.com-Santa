@@ -95,3 +95,39 @@ test('the preview file on disk is never listed as a family photo, and admin can 
   assert.deepEqual(JSON.parse((await get('/api/admin/files?code=' + code, 'a111')).buf), { files: [file], chosen: [file], paid: true, digital: true });
   srv.close();
 });
+
+const DAY = 86400000;
+test('a paid digital order gets a private family link; the cashier can show it but cannot download', async () => {
+  const { db, srv, get, code, file, original } = await boot();
+  assert.equal((await get('/api/delivery?code=' + code, 'c111')).status, 404); // nothing before payment
+  payFor(db, code, file);
+  const d = JSON.parse((await get('/api/delivery?code=' + code, 'c111')).buf);
+  assert.match(d.token, /^[0-9a-f]{32}$/);
+  assert.match(d.url, /\/get\.html#[0-9a-f]{32}$/);
+  assert.equal((await get('/api/delivery?code=' + code, 'm111')).status, 401); // only the cashier (and admin) can show the link
+  assert.equal((await get('/api/delivery-qr?code=' + code, 'c111')).type, 'image/svg+xml');
+  const list = JSON.parse((await get('/api/delivery/' + d.token)).buf);
+  assert.deepEqual(list.files, [file]);
+  assert.ok((await get(`/delivery/${d.token}/${file}`)).buf.equals(original)); // the family gets the clean file
+  assert.equal((await get(`/photo/${code}/${file}`, 'c111')).status, 401); // staff PINs still cannot fetch originals
+  assert.equal((await get(`/delivery/${'0'.repeat(32)}/${file}`)).status, 404);
+  assert.equal((await get(`/delivery/${d.token}/other.jpg`)).status, 404);
+  srv.close();
+});
+test('a print-only order gets no family link, and links stop working after 30 days', async () => {
+  const { delivery, deliveryFor } = require('../server/orders');
+  const { db, srv, code, file } = await boot();
+  saveCart(db, code, [{ item: 'print_8x10', qty: 1 }], [file]);
+  const now = new Date('2026-12-20T10:00:00Z');
+  pay(db, code, { method: 'cash', amountReceived: 3500, expectedTotal: 3500, cashier: 'amy' }, now);
+  assert.throws(() => deliveryFor(db, code, now), /not found/);
+  const code2 = addWalkIn(db, 1, { name: 'B', phone: '', consent: true }).code;
+  db.prepare("INSERT INTO photos(code,file) VALUES(?,'z.jpg')").run(code2);
+  saveCart(db, code2, [{ item: 'numerique', qty: 1 }], ['z.jpg']);
+  pay(db, code2, { method: 'cash', amountReceived: 5000, expectedTotal: 5000, cashier: 'amy' }, now);
+  const { token } = deliveryFor(db, code2, now);
+  assert.deepEqual(delivery(db, token, new Date(+now + 29 * DAY)).files, ['z.jpg']);
+  assert.throws(() => delivery(db, token, new Date(+now + 31 * DAY)), /not found/);
+  assert.throws(() => delivery(db, 'nope', now), /not found/);
+  srv.close();
+});
