@@ -1,0 +1,38 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Picture Me Please</title><link rel="stylesheet" href="/style.css"></head><body><main>
+<div class="top"><h1>Caisse</h1><button class="alt" onclick="toggleLang()" data-t="lang"></button></div>
+<div class="card"><input id="code" data-tp="code" autocapitalize="characters"><button id="load" data-t="check_in"></button></div>
+<div class="card" id="o" hidden><div id="lines"></div><div class="tot" id="tot"></div>
+<div id="payform"><h2 data-t="method"></h2>
+<label class="row"><input type="radio" name="m" value="cash" checked><span data-t="cash"></span></label>
+<label class="row"><input type="radio" name="m" value="mobile_money"><span data-t="mobile_money"></span></label>
+<div id="momo" hidden><label data-t="provider"></label><select id="prov"></select><input id="ref" data-tp="reference"></div>
+<div id="cashf"><input id="recv" type="number" inputmode="numeric" data-tp="received"></div>
+<button id="pay" data-t="paid_btn" disabled></button></div><p id="msg"></p></div>
+</main><script src="/app.js"></script><script>
+let order = null, code = '';
+const method = () => document.querySelector('input[name=m]:checked').value;
+function valid() {
+  if (!order || order.paid) return false;
+  return method() === 'cash' ? +$('#recv').value >= order.total : !!$('#ref').value.trim();
+}
+const sync = () => { $('#momo').hidden = method() !== 'mobile_money'; $('#cashf').hidden = method() !== 'cash'; $('#pay').disabled = !valid(); };
+document.querySelectorAll('input[name=m]').forEach((r) => (r.onchange = sync)); ['recv', 'ref'].forEach((i) => $('#' + i).oninput = sync);
+async function load() {
+  code = $('#code').value.trim().toUpperCase();
+  try { order = await api('GET', '/api/order?code=' + code); } catch (e) { order = null; $('#o').hidden = true; return; }
+  $('#o').hidden = false;
+  $('#lines').innerHTML = order.lines.map((l) => `<div class="item"><span>${l.qty}× ${t(l.item)} ${l.discounted ? '<b class="good">' + t('discount') + '</b>' : ''}</span><span>${xof(l.amount)}</span></div>`).join('');
+  $('#tot').textContent = t('total') + ' ' + xof(order.total);
+  $('#prov').innerHTML = PROVIDERS[order.country].map((p) => `<option>${p}</option>`).join('');
+  $('#payform').hidden = order.paid;
+  $('#msg').textContent = order.paid ? t('paid') + (order.print_state === 'ready' ? ' · ' + t('printing') : '') : '';
+  sync();
+}
+$('#load').onclick = load;
+$('#pay').onclick = async () => {
+  try { await api('POST', '/api/pay', { code, expectedTotal: order.total, method: method(), provider: method() === 'mobile_money' ? $('#prov').value : undefined, reference: $('#ref').value, amountReceived: +$('#recv').value || undefined }); load(); }
+  catch (e) { $('#msg').textContent = errText(e.message); $('#msg').className = 'err'; }
+};
+(async () => { applyI18n(); try { const a = await api('GET', '/api/active?mall=' + mall); if (a) { $('#code').value = a.code; load(); } } catch (e) {} })();
+window.render = load;
+</script></body></html>

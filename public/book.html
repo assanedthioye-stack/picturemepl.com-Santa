@@ -1,0 +1,47 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Picture Me Please</title><link rel="stylesheet" href="/style.css"></head>
+<body><main id="m">
+<div class="top"><h1 data-t="book_title"></h1><button class="alt" onclick="toggleLang()" data-t="lang"></button></div>
+<div class="card" id="form">
+  <label data-t="mall"></label><select id="mall"></select>
+  <label data-t="day"></label><input id="day" type="date">
+  <h2 data-t="slots"></h2><div class="slots" id="slots"></div>
+  <input id="name" data-tp="name" autocomplete="name"><input id="phone" data-tp="phone" type="tel" autocomplete="tel">
+  <label class="row"><input type="checkbox" id="consent"><span data-t="consent"></span></label>
+  <button id="go" data-t="book" disabled></button><p class="err" id="err"></p>
+</div>
+<div class="card" id="done" hidden><h2 data-t="your_code"></h2><div class="code" id="code"></div><img class="qr" id="qr" alt="QR"><p data-t="show_code"></p></div>
+<div class="card"><h2 data-t="cancel_t"></h2><input id="ccode" data-tp="code"><button class="alt" id="cbtn" data-t="cancel"></button><p id="cmsg"></p></div>
+</main>
+<script src="/app.js"></script>
+<script>
+let slot = null;
+$('#day').value = new Date().toISOString().slice(0, 10);
+async function loadSlots() {
+  const s = await pub('GET', `/api/slots?mall=${$('#mall').value}&day=${$('#day').value}`);
+  slot = null; check();
+  $('#slots').innerHTML = s.length ? '' : `<p>${t('no_slots')}</p>`;
+  for (const x of s) {
+    const b = document.createElement('button');
+    b.textContent = new Date(x.start_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + (x.remaining ? ` (${x.remaining})` : ' ' + t('full'));
+    b.disabled = !x.remaining;
+    b.onclick = () => { slot = x.id; [...$('#slots').children].forEach((c) => c.classList.remove('on')); b.classList.add('on'); check(); };
+    $('#slots').append(b);
+  }
+}
+const check = () => ($('#go').disabled = !(slot && $('#name').value.trim() && $('#phone').value.trim() && $('#consent').checked));
+['name', 'phone', 'consent'].forEach((i) => $('#' + i).addEventListener('input', check));
+$('#day').onchange = $('#mall').onchange = loadSlots;
+$('#go').onclick = async () => {
+  try {
+    const r = await pub('POST', '/api/book', { slotId: slot, name: $('#name').value, phone: $('#phone').value, consent: $('#consent').checked });
+    $('#form').hidden = true; $('#done').hidden = false; $('#code').textContent = r.code; $('#qr').src = '/api/qr/' + r.code;
+  } catch (e) { $('#err').textContent = errText(e.message); loadSlots(); }
+};
+$('#cbtn').onclick = async () => { try { await pub('POST', '/api/cancel', { code: $('#ccode').value.trim().toUpperCase() }); $('#cmsg').textContent = t('cancelled'); } catch (e) { $('#cmsg').textContent = errText(e.message); } };
+(async () => {
+  const malls = await pub('GET', '/api/malls');
+  $('#mall').innerHTML = malls.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
+  applyI18n(); loadSlots();
+})();
+window.render = () => loadSlots();
+</script></body></html>

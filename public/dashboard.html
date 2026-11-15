@@ -1,0 +1,69 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Picture Me Please</title><link rel="stylesheet" href="/style.css">
+<style>.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}.tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}.tile b{display:block;font-size:1.5rem}.tile span{font-size:.85rem;opacity:.75}
+.bar{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:.9rem}.bar i{display:block;height:14px;background:var(--acc);border-radius:4px;min-width:2px}.bar em{font-style:normal;min-width:84px}.bar u{text-decoration:none;opacity:.8;white-space:nowrap}
+.filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}.filters>*{min-width:0}table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px solid var(--line);text-align:right}td:first-child,th:first-child{text-align:left}main{max-width:900px}</style></head>
+<body><main>
+<div class="top"><h1 data-t="dash"></h1><button class="alt" onclick="toggleLang()" data-t="lang"></button></div>
+<div class="card filters"><select id="country"><option value="SN">Sénégal</option><option value="CI">Côte d'Ivoire</option><option value="BJ">Bénin</option><option value="" data-t="all"></option></select><div><label data-t="from"></label><input id="from" type="date"></div><div><label data-t="to"></label><input id="to" type="date"></div></div>
+<div class="tiles" id="tiles"></div>
+<div class="card"><h2 data-t="trend"></h2><div id="trend"></div></div>
+<div class="card"><h2 data-t="activity"></h2><div id="activity"></div></div>
+<div class="card"><h2 data-t="peak"></h2><div id="peak"></div></div>
+<div class="card"><h2 data-t="by_mall"></h2><div id="bymall"></div></div>
+<div class="card"><h2 data-t="funnel"></h2><div id="funnel"></div></div>
+<div class="card"><h2 data-t="mix"></h2><div id="mix"></div><p><span data-t="discounts"></span>: <b id="disc"></b></p></div>
+<div class="card"><h2 data-t="pay_split"></h2><div id="pay"></div></div>
+<div class="card"><button id="x1" data-t="export_orders"></button> <button class="alt" id="x2" data-t="export_daily"></button> <small data-t="export_hint"></small></div>
+<div class="card"><h2 data-t="cashiers"></h2><table id="cash"></table></div>
+</main><script src="/app.js"></script><script>
+const today = new Date(); const ago = new Date(+today - 6 * 86400000);
+$('#to').value = today.toISOString().slice(0, 10); $('#from').value = ago.toISOString().slice(0, 10);
+const pct = (x) => Math.round(x * 100) + ' %';
+const bars = (rows, fmt = xof) => { const max = Math.max(1, ...rows.map((r) => r[1])); return rows.map(([k, v]) => `<div class="bar"><em>${esc(k)}</em><i style="width:${(v / max) * 55}%"></i><u>${fmt(v)}</u></div>`).join('') || '—'; };
+const W = 600, H = 190, PAD = 40;
+function lines(days, series) { // inline SVG, no library; single-day ranges draw as dots
+  const max = Math.max(1, ...series.flatMap((s) => s.values));
+  const x = (i) => PAD + (days.length < 2 ? (W - PAD * 2) / 2 : (i / (days.length - 1)) * (W - PAD * 2));
+  const y = (v) => H - PAD - (v / max) * (H - PAD * 2);
+  const grid = [0, 0.5, 1].map((f) => `<line x1="${PAD}" x2="${W - 6}" y1="${y(max * f)}" y2="${y(max * f)}" stroke="currentColor" opacity=".12"/><text x="2" y="${y(max * f) + 4}" font-size="16" fill="currentColor" opacity=".6">${Math.round(max * f)}</text>`).join('');
+  const lab = [0, days.length - 1].filter((i, k, a) => a.indexOf(i) === k).map((i) => `<text x="${x(i)}" y="${H - 6}" font-size="16" text-anchor="middle" fill="currentColor" opacity=".7">${esc(days[i].slice(5))}</text>`).join('');
+  const body = series.map((s) => `<polyline fill="none" stroke="${s.color}" stroke-width="2.5" points="${s.values.map((v, i) => x(i) + ',' + y(v)).join(' ')}"/>` + s.values.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="3.5" fill="${s.color}"><title>${esc(days[i])}: ${s.fmt ? s.fmt(v) : v}</title></circle>`).join('')).join('');
+  const legend = series.length > 1 ? `<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:.85rem">${series.map((s) => `<span><b style="color:${s.color}">●</b> ${esc(s.name)}</span>`).join('')}</div>` : '';
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img">${grid}${lab}${body}</svg>${legend}`;
+}
+function columns(vals) {
+  const max = Math.max(1, ...vals), bw = (W - PAD) / 24;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img">` + vals.map((v, h) => `<rect x="${PAD + h * bw + 2}" y="${H - PAD - (v / max) * (H - PAD * 2)}" width="${bw - 4}" height="${(v / max) * (H - PAD * 2)}" rx="3" fill="var(--acc)"><title>${h}h: ${v}</title></rect>` + (h % 3 === 0 ? `<text x="${PAD + h * bw + bw / 2}" y="${H - 8}" font-size="16" text-anchor="middle" fill="currentColor" opacity=".7">${h}h</text>` : '')).join('') + '</svg>';
+}
+async function dlCsv(type) {
+  try {
+    const r = await fetch(`/api/admin/export?type=${type}&country=${$('#country').value}&from=${$('#from').value}&to=${$('#to').value}`, { headers: { 'x-pin': getPin() } });
+    if (!r.ok) throw new Error(r.status === 401 ? 'pin' : (await r.json()).error);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(await r.blob());
+    a.download = /filename="([^"]+)"/.exec(r.headers.get('content-disposition'))?.[1] || type + '.csv';
+    a.click(); URL.revokeObjectURL(a.href);
+  } catch (e) { alert(errText(e.message)); }
+}
+$('#x1').onclick = () => dlCsv('orders'); $('#x2').onclick = () => dlCsv('daily');
+const tile = (label, v) => `<div class="tile"><b>${v}</b><span>${label}</span></div>`;
+async function load() {
+  let d;
+  try { d = await api('GET', `/api/admin/dashboard?country=${$('#country').value}&from=${$('#from').value}&to=${$('#to').value}`); } catch (e) { $('#tiles').textContent = errText(e.message); return; }
+  const f = d.funnel;
+  $('#tiles').innerHTML = tile(t('revenue'), xof(d.revenue.total)) + tile(t('orders'), d.revenue.orders) + tile(t('avg_order'), xof(d.revenue.avgOrder))
+    + tile(t('conversion'), pct(f.conversion)) + tile(t('noshow'), f.noShows + ' / ' + f.bookings) + tile(t('avg_wait'), Math.round(d.ops.avgWaitMin) + ' ' + t('min')) + tile(t('fill'), pct(d.ops.fillRate));
+  const days = d.trend.map((x) => x.day);
+  $('#trend').innerHTML = lines(days, [{ name: t('revenue'), color: '#e8590c', values: d.trend.map((x) => x.revenue), fmt: xof }]);
+  $('#activity').innerHTML = lines(days, [{ name: t('s_book'), color: '#1c7ed6', values: d.trend.map((x) => x.bookings) }, { name: t('s_served'), color: '#2b8a3e', values: d.trend.map((x) => x.served) }, { name: t('s_orders'), color: '#e8590c', values: d.trend.map((x) => x.orders) }]);
+  $('#peak').innerHTML = columns(d.peakHours);
+  $('#bymall').innerHTML = bars(d.byMall.map((x) => [x.mall, x.total]));
+  $('#funnel').innerHTML = bars([[t('f_bookings'), f.bookings], [t('f_walkins'), f.walkins], [t('f_served'), f.served], [t('f_paid'), f.paid]], String);
+  $('#mix').innerHTML = bars(Object.entries(d.items).map(([k, v]) => [t(k), v]), String);
+  $('#disc').textContent = d.discountedLines;
+  $('#pay').innerHTML = bars([...Object.entries(d.byMethod).map(([k, v]) => [t(k), v]), ...Object.entries(d.byProvider)]);
+  $('#cash').innerHTML = `<tr><th></th><th>${t('cash')}</th><th>${t('mobile_money')}</th></tr>` + Object.entries(d.byCashier).map(([c, x]) => `<tr><td>${esc(c)}</td><td>${xof(x.cash)}</td><td>${xof(x.mobile_money)}</td></tr>`).join('');
+}
+['country', 'from', 'to'].forEach((i) => ($('#' + i).onchange = load));
+window.render = load; applyI18n(); load(); setInterval(load, 30000);
+</script></body></html>

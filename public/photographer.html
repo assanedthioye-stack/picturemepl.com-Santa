@@ -1,0 +1,12 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Picture Me Please</title><link rel="stylesheet" href="/style.css"></head><body><main>
+<div class="top"><h1>Photographe</h1><button class="alt" onclick="toggleLang()" data-t="lang"></button></div>
+<div class="card"><p data-t="now"></p><div class="big" id="who"></div><div class="code" id="code"></div><div class="big" id="n"></div></div>
+</main><script src="/app.js"></script><script>
+async function refresh() {
+  try { const a = await api('GET', '/api/active?mall=' + mall);
+    $('#who').textContent = a ? a.name : t('waiting_family'); $('#code').textContent = a ? a.code : '';
+    $('#n').textContent = a ? (await api('GET', '/api/gallery/' + a.code)).length + ' ' + t('photos') : '';
+  } catch (e) { $('#who').textContent = errText(e.message); }
+}
+window.render = refresh; applyI18n(); refresh(); setInterval(refresh, 2000);
+</script></body></html>
