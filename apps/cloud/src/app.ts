@@ -43,6 +43,8 @@ const Push = z.object({ rows: z.array(z.object({ tbl: z.string(), row: z.record(
 export function createCloudApp(d: CloudDeps): Hono {
   const { db } = d;
   const app = new Hono();
+  // Providers send the customer back here (CinetPay with a POST, which static web hosts refuse), then on to the site.
+  const returnTo = (pathOnWeb: string) => `${d.payments.apiUrl}/api/return?to=${encodeURIComponent(d.webUrl + pathOnWeb)}`;
 
   app.onError((err, c) => {
     if (err instanceof PayError) return c.json({ error: err.message }, err.status as 400);
@@ -55,6 +57,12 @@ export function createCloudApp(d: CloudDeps): Hono {
   if (d.storage.handle) app.all('/dev-storage/*', (c) => d.storage.handle!(c.req.raw));
 
   // ─── public: booking flow ───
+  app.all('/api/return', (c) => {
+    const to = c.req.query('to') ?? '';
+    // Only our own site: never an open redirect.
+    return c.redirect(to.startsWith(`${d.webUrl}/`) ? to : `${d.webUrl}/`, 303);
+  });
+
   app.get('/api/venues', async (c) => {
     const country = z.enum(['SN', 'BJ', 'CI']).parse(c.req.query('country'));
     return c.json(await db.query(
@@ -178,7 +186,7 @@ export function createCloudApp(d: CloudDeps): Hono {
     const r = await startPayment(db, d.payments, {
       orderId: order.id, method: p.method as Method, country: bk.country, phone: phoneFor(p, bk.country) ?? bk.phone,
       customerName: bk.full_name ?? undefined, description: 'Picture Me Please - reservation',
-      returnUrl: `${d.webUrl}/b/${c.req.param('token')}?paid=1`,
+      returnUrl: returnTo(`/b/${c.req.param('token')}?paid=1`),
     });
     return c.json(r.kind === 'redirect' ? { kind: 'redirect', url: r.url, paymentId: r.paymentId } : { kind: 'push', paymentId: r.paymentId });
   });
@@ -237,7 +245,7 @@ export function createCloudApp(d: CloudDeps): Hono {
     const r = await startPayment(db, d.payments, {
       orderId, method: p.method as Method, country: bk.country, phone: phoneFor(p, bk.country) ?? bk.phone,
       customerName: bk.full_name ?? undefined, description: `Picture Me Please - ${ids.length} photo(s)`,
-      returnUrl: `${d.webUrl}/b/${c.req.param('token')}?paid=1`,
+      returnUrl: returnTo(`/b/${c.req.param('token')}?paid=1`),
     });
     return c.json({ ...(r.kind === 'redirect' ? { kind: 'redirect', url: r.url } : { kind: 'push' }), paymentId: r.paymentId, totalXof: total });
   });
@@ -340,7 +348,7 @@ export function createCloudApp(d: CloudDeps): Hono {
     if (b.phone && !phone) throw new PayError(400, 'invalid_phone');
     const r = await startPayment(db, d.payments, {
       orderId: String(b.order.id), paymentId: b.paymentId, method: b.method as Method, country: booth.country, phone,
-      description: 'Picture Me Please', returnUrl: `${d.webUrl}/merci`, receivedBy: b.receivedBy ?? null,
+      description: 'Picture Me Please', returnUrl: returnTo('/merci'), receivedBy: b.receivedBy ?? null,
     });
     return c.json({ ...(r.kind === 'redirect' ? { kind: 'redirect', url: r.url } : { kind: 'push' }), provider: r.provider });
   });

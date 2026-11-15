@@ -29,7 +29,7 @@ export function useEvents(handlers: Record<string, (data: any) => void>): void {
   }, []);
 }
 
-export interface Me { id: string; fullName: string; role: 'admin' | 'supervisor' | 'host' | 'photographer' | 'cashier'; locale: 'fr' | 'en'; boothCountry: 'SN' | 'BJ' | 'CI' }
+export interface Me { id: string; fullName: string; role: 'admin' | 'supervisor' | 'host' | 'photographer' | 'cashier'; locale: 'fr' | 'en'; boothCountry: 'SN' | 'BJ' | 'CI'; cloud: boolean }
 export interface PhotoDto { id: string; sessionId: string; seq: number; hidden: boolean; favorite: boolean; previewUrl: string }
 export interface CameraInfo {
   id: string; armedSessionId: string | null; driver: string; connected: boolean; model: string | null;

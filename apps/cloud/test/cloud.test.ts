@@ -46,7 +46,7 @@ describe('public booking', () => {
   it('pays through the provider; the webhook is only a hint, the provider check confirms', async () => {
     const pay = await c.call('POST', `/api/bookings/${token}/pay`, { method: 'wave' });
     expect(pay.json).toMatchObject({ kind: 'redirect' });
-    expect(c.cinet.inits.at(-1)).toMatchObject({ amountXof: 10_000, method: 'wave', country: 'SN', phone: '+221771234567', returnUrl: `https://web.test/b/${token}?paid=1`, notifyUrl: 'http://cloud.test/api/webhooks/cinetpay' });
+    expect(c.cinet.inits.at(-1)).toMatchObject({ amountXof: 10_000, method: 'wave', country: 'SN', phone: '+221771234567', returnUrl: `http://cloud.test/api/return?to=${encodeURIComponent(`https://web.test/b/${token}?paid=1`)}`, notifyUrl: 'http://cloud.test/api/webhooks/cinetpay' });
 
     // A webhook while the provider still says pending changes nothing.
     await c.call('POST', '/api/webhooks/cinetpay', { cpm_trans_id: pay.json.paymentId });
@@ -173,7 +173,12 @@ describe('booth sync', () => {
     c.cinet.state.next = { status: 'pending', raw: {} };
     const init = (await c.call('POST', '/api/sync/payments', { order, items, paymentId: 'pay-booth-1', method: 'wave', phone: '77 123 45 67' }, c.booth(c.sn.token))).json;
     expect(init).toMatchObject({ kind: 'redirect' });
-    expect(c.cinet.inits.at(-1)).toMatchObject({ paymentId: 'pay-booth-1', amountXof: 7_500, returnUrl: 'https://web.test/merci' });
+    expect(c.cinet.inits.at(-1)).toMatchObject({ paymentId: 'pay-booth-1', amountXof: 7_500, returnUrl: `http://cloud.test/api/return?to=${encodeURIComponent('https://web.test/merci')}` });
+    // The return hop accepts CinetPay's POST and only ever redirects to our own site.
+    const back = await c.app.fetch(new Request(c.cinet.inits.at(-1)!.returnUrl, { method: 'POST', body: new URLSearchParams({ transaction_id: 'x' }) }));
+    expect([back.status, back.headers.get('location')]).toEqual([303, 'https://web.test/merci']);
+    const evil = await c.app.fetch(new Request(`http://cloud.test/api/return?to=${encodeURIComponent('https://evil.test/')}`));
+    expect(evil.headers.get('location')).toBe('https://web.test/');
     expect((await c.call('GET', '/api/sync/payments/pay-booth-1', undefined, c.booth(c.sn.token))).json.status).toBe('pending');
     expect((await c.call('GET', '/api/sync/payments/pay-booth-1', undefined, c.booth(c.bj.token))).status).toBe(404);
 

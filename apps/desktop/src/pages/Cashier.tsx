@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import { COUNTRIES, PRINT_LABEL, type MomoMethod, type PrintSize } from '@pmp/shared';
 import { api, useEvents, type Me, type PhotoDto } from '../api';
 import { errorText, money, useT } from '../i18n';
 import { TopBar } from './StaffApp';
 
-interface Family { bookingId: string; bookingCode: string; familyName: string | null; photoCount: number; favCount: number }
+interface Family { bookingId: string; bookingCode: string; familyName: string | null; photoCount: number; favCount: number; prepaidXof: number; prepaidPackageId: string | null }
 interface Package { id: string; code: string; nameFr: string; nameEn: string; priceXof: number; digitalsIncluded: number; prints: Partial<Record<PrintSize, number>> }
 interface Drawer { id: string; openingFloatXof: number }
 type Method = 'cash' | MomoMethod;
@@ -37,7 +38,7 @@ export function Cashier({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav
 
   async function open(f: Family) {
     setFamily(f);
-    setQty({});
+    setQty(f.prepaidPackageId ? { [f.prepaidPackageId]: 1 } : {}); // the package bought online
     setSlots({});
     setError(null);
     const ps = await api<PhotoDto[]>('GET', `/api/pos/families/${f.bookingId}/photos`);
@@ -76,7 +77,9 @@ export function Cashier({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav
 
   const digitalIds = digitalsAllowed === 0 ? [] : photos.filter((p) => digital.has(p.id)).map((p) => p.id);
   const digitalOk = digitalsAllowed === 0 || (digitalIds.length > 0 && (digitalsAllowed === -1 || digitalIds.length <= digitalsAllowed));
-  const vat = Math.round((total * 1800) / 11800); // display only; the server computes the receipt
+  const prepaid = Math.min(family?.prepaidXof ?? 0, total);
+  const due = total - prepaid;
+  const vat = Math.round((due * 1800) / 11800); // display only; the server computes the receipt
 
   async function charge() {
     if (!family) return;
@@ -194,8 +197,9 @@ export function Cashier({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav
               <section className="border-t border-slate-200 px-4 pb-4 pt-3 shadow-[0_-8px_16px_-12px_rgba(0,0,0,0.25)]">
                 <div className="flex items-baseline justify-between">
                   <span className="text-slate-500">{t('pos.total')}</span>
-                  <span className="text-3xl font-bold">{money(locale, total)}</span>
+                  <span className="text-3xl font-bold">{money(locale, due)}</span>
                 </div>
+                {prepaid > 0 && <p className="text-right text-sm font-medium text-emerald-700">{t('pos.prepaid')} −{money(locale, prepaid)}</p>}
                 <p className="text-right text-sm text-slate-500">{t('pos.vat')} {money(locale, vat)}</p>
                 {digitalsAllowed > 0 && (
                   <p className={`text-sm ${digitalIds.length > digitalsAllowed ? 'font-semibold text-brand-600' : 'text-slate-500'}`}>
@@ -205,7 +209,7 @@ export function Cashier({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav
                 {error && <p role="alert" className="mt-2 rounded-lg bg-brand-50 px-3 py-2 text-brand-700">{error}</p>}
                 <button onClick={charge} disabled={total === 0 || !digitalOk || Object.values(slots).some((s) => s.length === 0)}
                   className="mt-3 w-full rounded-xl bg-brand-600 py-4 text-lg font-bold text-white disabled:opacity-30">
-                  {t('pos.charge')} {total > 0 && money(locale, total)}
+                  {total > 0 && due === 0 ? t('pay.prepaid.confirm') : `${t('pos.charge')} ${total > 0 ? money(locale, due) : ''}`}
                 </button>
                 {Object.entries(slots).length > 0 && (
                   <p className="mt-2 text-xs text-slate-400">
@@ -219,7 +223,7 @@ export function Cashier({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav
       </div>
 
       {checkout && (
-        <PaymentModal total={checkout.total} orderId={checkout.orderId} drawerOpen={!!drawer} methods={['cash', ...COUNTRIES[me.boothCountry].momo]}
+        <PaymentModal total={checkout.total} orderId={checkout.orderId} drawerOpen={!!drawer} methods={['cash', ...COUNTRIES[me.boothCountry].momo]} cloud={me.cloud}
           onClose={() => setCheckout(null)}
           onPaid={() => { setCheckout(null); setFamily(null); setPhotos([]); void loadFamilies(); }} />
       )}
@@ -227,7 +231,11 @@ export function Cashier({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav
   );
 }
 
-function PaymentModal({ total, orderId, drawerOpen, methods, onClose, onPaid }: { total: number; orderId: string; drawerOpen: boolean; methods: Method[]; onClose(): void; onPaid(): void }) {
+interface LivePayment { paymentId: string; kind: 'redirect' | 'push'; url: string | null }
+
+function PaymentModal({ total, orderId, drawerOpen, methods, cloud, onClose, onPaid }: {
+  total: number; orderId: string; drawerOpen: boolean; methods: Method[]; cloud: boolean; onClose(): void; onPaid(): void;
+}) {
   const { t, locale } = useT();
   const [method, setMethod] = useState<Method>('cash');
   const [tendered, setTendered] = useState(total);
@@ -235,33 +243,71 @@ function PaymentModal({ total, orderId, drawerOpen, methods, onClose, onPaid }: 
   const [phone, setPhone] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ change: number } | null>(null);
+  const [done, setDone] = useState<{ change: number; warning?: string } | null>(null);
+  const [manual, setManual] = useState(!cloud);
+  const [live, setLive] = useState<LivePayment | null>(null);
+  const [verifyRef, setVerifyRef] = useState('');
   const rounds = [...new Set([total, Math.ceil(total / 5000) * 5000, Math.ceil(total / 10000) * 10000, Math.ceil(total / 10000) * 10000 + 10000])];
+  const online = method !== 'cash' && !manual && total > 0;
 
-  async function pay() {
+  async function run(fn: () => Promise<void>) {
     setBusy(true);
     setError(null);
-    try {
-      const body = method === 'cash' ? { method, tenderedXof: tendered } : { method, reference, payerPhone: phone || undefined };
-      const r = await api<{ changeXof: number }>('POST', `/api/pos/orders/${orderId}/pay`, body);
-      setDone({ change: r.changeXof });
-    } catch (e) {
-      setError(errorText(t, e));
-    } finally {
-      setBusy(false);
-    }
+    try { await fn(); } catch (e) { setError(errorText(t, e)); } finally { setBusy(false); }
   }
+
+  const pay = () => run(async () => {
+    const body = total === 0 ? { method: 'prepaid' } : method === 'cash' ? { method, tenderedXof: tendered } : { method, reference, payerPhone: phone || undefined };
+    const r = await api<{ changeXof: number }>('POST', `/api/pos/orders/${orderId}/pay`, body);
+    setDone({ change: r.changeXof });
+  });
+
+  const startOnline = () => run(async () => {
+    setLive(await api<LivePayment>('POST', `/api/pos/orders/${orderId}/momo`, { method, phone: phone || undefined }));
+  });
+
+  const settle = (r: { status: string; operatorMismatch?: boolean }) => {
+    if (r.status === 'succeeded') setDone({ change: 0, warning: r.operatorMismatch ? t('pay.verify.mismatch') : undefined });
+    else if (r.status === 'failed') { setLive(null); setError(t('pay.failed')); }
+    else if (r.operatorMismatch) setError(t('pay.verify.mismatch'));
+  };
+  const verify = () => run(async () => {
+    settle(await api('POST', `/api/pos/payments/${live!.paymentId}/verify`, { operatorRef: verifyRef || undefined }));
+  });
+
+  // Poll while the customer pays (the cloud also re-asks the provider when its webhook is late).
+  useEffect(() => {
+    if (!live || done) return;
+    const id = setInterval(() => { api<{ status: string }>('GET', `/api/pos/payments/${live.paymentId}`).then(settle, () => {}); }, 3000);
+    return () => clearInterval(id);
+  }, [live, done]);
+
+  const close = () => {
+    if (live) void api('POST', '/api/pos/kiosk-payment/clear').catch(() => {});
+    onClose();
+  };
+  const input = 'rounded-xl border border-slate-300 px-4 py-3';
 
   return (
     <div className="fixed inset-0 z-10 grid place-items-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="pay-title">
-      <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+      <div className="max-h-full w-full max-w-md overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
         {done ? (
           <div className="flex flex-col items-center gap-3 text-center">
             <p className="grid size-16 place-items-center rounded-full bg-emerald-100 text-3xl text-emerald-700">✓</p>
             <h2 id="pay-title" className="text-xl font-bold">{t('pay.done')}</h2>
             {done.change > 0 && <p className="text-lg">{t('pay.change')} : <b className="text-2xl">{money(locale, done.change)}</b></p>}
+            {done.warning && <p role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-amber-800">{done.warning}</p>}
             <p className="text-sm text-slate-500">{t('pay.done.sub')}</p>
             <button autoFocus onClick={onPaid} className="mt-2 w-full rounded-xl bg-slate-900 py-3 font-semibold text-white">{t('pay.next')}</button>
+          </div>
+        ) : total === 0 ? (
+          <div className="flex flex-col gap-4">
+            <h2 id="pay-title" className="text-xl font-bold">{t('pos.prepaid')}</h2>
+            {error && <p role="alert" className="rounded-lg bg-brand-50 px-3 py-2 text-brand-700">{error}</p>}
+            <div className="flex gap-2">
+              <button onClick={close} className="flex-1 rounded-xl border border-slate-300 py-3 font-medium">{t('cancel')}</button>
+              <button onClick={pay} disabled={busy} className="flex-[2] rounded-xl bg-brand-600 py-3 font-bold text-white disabled:opacity-30">{t('pay.prepaid.confirm')}</button>
+            </div>
           </div>
         ) : (
           <>
@@ -271,7 +317,7 @@ function PaymentModal({ total, orderId, drawerOpen, methods, onClose, onPaid }: 
             </div>
             <div className="mb-4 grid gap-1 rounded-xl bg-slate-100 p-1" style={{ gridTemplateColumns: `repeat(${methods.length}, 1fr)` }} role="tablist">
               {methods.map((m) => (
-                <button key={m} role="tab" aria-selected={method === m} onClick={() => { setMethod(m); setError(null); }}
+                <button key={m} role="tab" aria-selected={method === m} disabled={!!live} onClick={() => { setMethod(m); setError(null); }}
                   className={`rounded-lg px-1 py-2 text-sm font-semibold ${method === m ? 'bg-white shadow' : 'text-slate-600'}`}>{t(`pay.${m}`)}</button>
               ))}
             </div>
@@ -280,7 +326,7 @@ function PaymentModal({ total, orderId, drawerOpen, methods, onClose, onPaid }: 
                 {!drawerOpen && <p role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-amber-800">{t('err.drawer_closed')}</p>}
                 <label className="flex flex-col gap-1 text-sm text-slate-600">{t('pay.tendered')}
                   <input type="number" inputMode="numeric" min={0} step={500} value={tendered} onChange={(e) => setTendered(Number(e.target.value))}
-                    className="rounded-xl border border-slate-300 px-4 py-3 text-2xl font-semibold" />
+                    className={`${input} text-2xl font-semibold`} />
                 </label>
                 <div className="flex flex-wrap gap-2">
                   {rounds.map((v) => (
@@ -291,23 +337,54 @@ function PaymentModal({ total, orderId, drawerOpen, methods, onClose, onPaid }: 
                 </div>
                 <p className="flex justify-between text-lg">{t('pay.change')} <b>{money(locale, Math.max(0, tendered - total))}</b></p>
               </div>
+            ) : online ? (
+              live ? (
+                <div className="flex flex-col items-center gap-3 text-center">
+                  {live.url ? (
+                    <>
+                      <QRCodeSVG value={live.url} size={200} level="H" marginSize={2} aria-label={t('kiosk.pay.title')} />
+                      <p className="text-sm text-slate-600">{t('pay.momo.scan')}</p>
+                    </>
+                  ) : (
+                    <p className="rounded-lg bg-slate-50 p-3 text-slate-700">{t('pay.momo.push')}</p>
+                  )}
+                  <p role="status" className="animate-pulse font-medium text-slate-700">{t('pay.momo.waiting')}</p>
+                  <div className="flex w-full gap-2 border-t border-slate-200 pt-3">
+                    <label className="sr-only" htmlFor="verify-ref">{t('pay.verify.ref')}</label>
+                    <input id="verify-ref" value={verifyRef} onChange={(e) => setVerifyRef(e.target.value.trim())} placeholder={t('pay.verify.ref')}
+                      autoComplete="off" className={`${input} min-w-0 flex-1 py-2 font-mono text-sm`} />
+                    <button onClick={verify} disabled={busy} className="rounded-xl bg-slate-900 px-3 text-sm font-semibold text-white disabled:opacity-30">{t('pay.verify')}</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <label className="flex flex-col gap-1 text-sm text-slate-600">{t('pay.momo.phone')}
+                    <input type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="off" className={input} />
+                  </label>
+                  <button onClick={startOnline} disabled={busy || (method === 'mtn_momo' && phone.length < 8)}
+                    className="rounded-xl bg-brand-600 py-3 font-bold text-white disabled:opacity-30">{t('pay.momo.send')}</button>
+                  <button onClick={() => setManual(true)} className="text-sm text-slate-500 underline">{t('pay.manual')}</button>
+                </div>
+              )
             ) : (
               <div className="flex flex-col gap-3">
                 <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">{t('pay.momo.hint')}</p>
                 <label className="flex flex-col gap-1 text-sm text-slate-600">{t('pay.reference')}
-                  <input value={reference} onChange={(e) => setReference(e.target.value.trim())} autoComplete="off"
-                    className="rounded-xl border border-slate-300 px-4 py-3 font-mono text-lg" />
+                  <input value={reference} onChange={(e) => setReference(e.target.value.trim())} autoComplete="off" className={`${input} font-mono text-lg`} />
                 </label>
                 <label className="flex flex-col gap-1 text-sm text-slate-600">{t('pay.phone')}
-                  <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className="rounded-xl border border-slate-300 px-4 py-3" />
+                  <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className={input} />
                 </label>
+                {cloud && <button onClick={() => setManual(false)} className="text-sm text-slate-500 underline">{t('pay.online')}</button>}
               </div>
             )}
             {error && <p role="alert" className="mt-3 rounded-lg bg-brand-50 px-3 py-2 text-brand-700">{error}</p>}
             <div className="mt-5 flex gap-2">
-              <button onClick={onClose} className="flex-1 rounded-xl border border-slate-300 py-3 font-medium">{t('cancel')}</button>
-              <button onClick={pay} disabled={busy || (method === 'cash' ? tendered < total || !drawerOpen : reference.length < 4)}
-                className="flex-[2] rounded-xl bg-brand-600 py-3 font-bold text-white disabled:opacity-30">{t('pay.confirm')}</button>
+              <button onClick={close} className="flex-1 rounded-xl border border-slate-300 py-3 font-medium">{t('cancel')}</button>
+              {!online && (
+                <button onClick={pay} disabled={busy || (method === 'cash' ? tendered < total || !drawerOpen : reference.length < 4)}
+                  className="flex-[2] rounded-xl bg-brand-600 py-3 font-bold text-white disabled:opacity-30">{t('pay.confirm')}</button>
+              )}
             </div>
           </>
         )}

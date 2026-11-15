@@ -8,6 +8,10 @@
     "dist:win": "pnpm --filter @pmp/desktop dist:win",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "db:generate": "pnpm --filter @pmp/db generate"
+    "db:generate": "pnpm --filter @pmp/db generate",
+    "dev:cloud": "pnpm --filter @pmp/cloud dev",
+    "dev:web": "pnpm --filter @pmp/web dev",
+    "build:web": "pnpm --filter @pmp/web build",
+    "build:edge": "pnpm --filter @pmp/cloud build:edge"
   }
 }

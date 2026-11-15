@@ -1,8 +1,11 @@
-# Picture Me Please — Booth (Phase 1)
+# Picture Me Please
 
 Windows booth app: direct Canon tethering, family touch screen on the 2nd monitor, silent print routing, PIN login + RBAC.
 
 ```
+apps/web           Public mobile site (Vite + Preact): booking, QR ticket, gallery
+apps/cloud         Cloud API (Hono): runs as a Supabase Edge Function, or on Node for dev/tests
+supabase/          Postgres migrations + the bundled edge function
 apps/desktop       Electron shell + React UI (staff app and /kiosk)
 apps/booth-server  Local API (runs in an Electron utilityProcess): camera, ingest, kiosk, print, auth
 packages/db        Drizzle SQLite schema + migrations (packages/db/drizzle)
@@ -120,6 +123,91 @@ The booth PC serves the staff app to **paired** devices over HTTPS on port 4443 
 Each job becomes a one-page PDF at the exact paper size (300 dpi, EXIF-rotated, centre-cropped) and goes to the Windows spooler through SumatraPDF (bundled with `pdf-to-printer`), with no dialog. Only lines of **paid** orders print, up to the paid quantity. A job interrupted mid-print is marked failed (never auto-reprinted).
 
 DNP tip: add the DS620A twice in Windows with different default paper ("DNP DS620A" = 4x6, "DNP DS620A 5x7" = 5x7), then set `print.printer.5x7 = DNP DS620A 5x7` in `settings`. Optional `print.paper.<size>` passes a driver paper name. `GET /api/printers` shows what each size resolves to.
+
+## Online: booking site, payments, gallery (Phase 3)
+
+```
+phone ── apps/web ──► cloud API (Supabase Edge Function + Postgres + Storage) ◄── booth sync (every 15 s)
+                           ▲   ▲                                                 push changes, pull online
+          CinetPay/FedaPay │   │ MTN MoMo                                        bookings, upload photos
+              (SN, CI)     │   │ (BJ)
+```
+
+**Family, on the phone:**
+1. Pick the country, the mall, the day and time, and the package (prices from the October 2026 list).
+2. Enter name and phone, then pay. The time slot is held for 15 minutes while they pay.
+   - **Senegal and Côte d'Ivoire:** Wave or Orange Money on the provider's payment page.
+   - **Benin:** an MTN MoMo prompt on the phone.
+3. Get the **ticket**: a high-contrast QR code, the 6-digit code, the gallery PIN, a downloadable PNG and a WhatsApp share link.
+4. After the shoot, the same link becomes the **gallery**. The family enters the PIN to see watermarked previews, unlocks photos by Mobile Money (Numérique price per photo), then downloads or shares the HD files.
+
+Photos included in the package the cashier sold are unlocked automatically. Walk-ins get a QR code to the same page from the Host screen.
+
+**Payments**
+- One adapter in `apps/cloud/src/payments/` covers CinetPay, FedaPay and MTN MoMo Collections.
+- **Webhooks only trigger a fresh status check** with the provider; nothing is ever marked paid from a webhook body alone.
+- **When a webhook is late:** the family's page and the cashier screen keep re-checking. The cashier also has **"Vérifier la transaction"**, which asks the provider directly and can compare the transaction ID from the customer's SMS.
+- **Celtiis Cash has no API integration yet.** It's paid at the booth with manual entry.
+- **The MTN merchant account:** with the Collections API, money goes to the account bound to the API user and key. `MTN_MERCHANT_MSISDN` (default `2290159089346`) is only shown for the manual fallback. Make sure the MTN credentials belong to that wallet.
+- **Amounts that don't match are never accepted.** Payment statuses only move forward.
+
+**Booth link to the cloud:** create the booth in the cloud (it prints the token once), then set three variables on the booth PC:
+
+```bash
+DATABASE_URL=postgres://… pnpm --filter @pmp/cloud seed -- --country SN --venue "…" --city Dakar --from 2026-12-01 --to 2026-12-31 --open 10:00 --close 20:00 --minutes 15 --capacity 1
+```
+
+```bat
+setx PMP_CLOUD_URL "https://<project>.supabase.co/functions/v1"
+setx PMP_BOOTH_ID "<printed id>"
+setx PMP_CLOUD_TOKEN "<printed token>"
+setx PMP_WEB_URL "https://<web site>"
+```
+
+- The booth pushes its sales and photos, pulls online bookings, and uploads gallery files:
+  - **400 px thumbnails and 1024 px previews** (from the watermarked preview) when a shoot finishes;
+  - **3000 px originals**: purchased photos first, then all of them.
+- If the Host enters a code the booth doesn't know yet, it syncs immediately before saying "not found".
+- A booth can only change its own rows. It can never mark a provider payment as paid, or change an online booking's code, PIN or slot.
+
+**Deploy (Supabase)**
+
+```bash
+supabase db push
+```
+
+```bash
+pnpm build:edge
+```
+
+```bash
+supabase functions deploy api --no-verify-jwt
+```
+
+Create a private Storage bucket `photos`. Set these function secrets:
+- `SUPABASE_DB_URL`, `PUBLIC_WEB_URL`, `API_PUBLIC_URL` (`https://<project>.supabase.co/functions/v1`), `GALLERY_SECRET` (long random);
+- **CinetPay:** `CINETPAY_APIKEY`, `CINETPAY_SITE_ID`;
+- **FedaPay:** `FEDAPAY_SECRET_KEY`, `FEDAPAY_ENV=live`;
+- **MTN:** `MTN_SUBSCRIPTION_KEY`, `MTN_API_USER`, `MTN_API_KEY`, `MTN_BASE_URL=https://proxy.momoapi.mtn.com`, `MTN_TARGET_ENV=mtnbenin`;
+- **Routing (optional):** `PROVIDER_SN` / `PROVIDER_CI` (`cinetpay` default, or `fedapay`).
+
+Webhook URLs to register with each provider: `…/functions/v1/api/webhooks/cinetpay`, `…/fedapay`, `…/mtn`.
+
+The site is static: `VITE_API_URL=https://<project>.supabase.co/functions/v1 pnpm build:web` and host `apps/web/dist` anywhere that serves `index.html` for unknown paths (`/b/…`).
+
+**Local dev:** start a Postgres, then run each of these in its own terminal:
+
+```bash
+DATABASE_URL=postgres://pmp:pmp@127.0.0.1/pmp_dev pnpm dev:cloud
+```
+
+```bash
+pnpm dev:web
+```
+
+`pnpm dev:cloud` accepts fake payments (approved instantly; a phone ending in 0000 is refused).
+
+**Tests:** `pnpm test` needs a Postgres the tests can create throwaway databases on (`TEST_DATABASE_ADMIN_URL`, default `postgres://pmp:pmp@127.0.0.1/postgres`).
 
 ## Security notes
 

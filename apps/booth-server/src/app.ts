@@ -31,6 +31,8 @@ export interface Deps {
   tls: TlsMaterial | null;
   /** null when the booth runs without the cloud (Mobile Money then falls back to manual entry). */
   cloud: CloudClient | null;
+  /** Pulls from the cloud now (a family who booked a minute ago is not synced yet). */
+  syncNow?: () => Promise<void>;
 }
 
 export function createApp(deps: Deps): express.Express {

@@ -112,7 +112,7 @@ export async function startBooth(config: Config, opts: { spooler?: Spooler; lanI
   });
   const cloud = config.cloud ? cloudClient(config.cloud) : null;
   const sync = cloud ? new CloudSync({ db, client: cloud, sessionsDir: config.sessionsDir, onPulled: () => hub.send('sync.pulled', {}) }) : null;
-  const app = createApp({ db, config, hub, boothId, cameras, printQueue, spooler, mirror, get tls() { return tls; }, cloud });
+  const app = createApp({ db, config, hub, boothId, cameras, printQueue, spooler, mirror, get tls() { return tls; }, cloud, syncNow: sync ? () => sync.pull() : undefined });
   if (!opts.manualSync) sync?.start();
   return {
     app, db, hub, cameras, printQueue, mirror, lanReady, sync,

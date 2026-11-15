@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import { COUNTRIES, type Country } from '@pmp/shared';
 import { api, useEvents, type Me } from '../api';
 import { errorText, useT } from '../i18n';
@@ -17,7 +18,7 @@ export function Host({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav?: 
   const [code, setCode] = useState('');
   const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
   const [walkIn, setWalkIn] = useState({ fullName: '', phone: '', country: me.boothCountry as Country, partySize: 2 });
-  const [added, setAdded] = useState<{ bookingCode: string; pin: string } | null>(null);
+  const [added, setAdded] = useState<{ bookingCode: string; pin: string; galleryUrl: string | null } | null>(null);
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => { api<QueueRow[]>('GET', '/api/queue').then(setQueue, () => {}); }, []);
@@ -82,6 +83,12 @@ export function Host({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav?: 
                 <p className="font-mono text-3xl font-bold tracking-widest">{added.bookingCode}</p>
                 <p className="mt-2 text-sm text-slate-600">{t('host.walkin.pin')}</p>
                 <p className="font-mono text-4xl font-bold tracking-[0.3em] text-brand-600">{added.pin}</p>
+                {added.galleryUrl && (
+                  <figure className="mt-3 flex flex-col items-center gap-2">
+                    <QRCodeSVG value={added.galleryUrl} size={168} level="M" marginSize={2} aria-label={t('host.walkin.gallery')} />
+                    <figcaption className="text-sm text-slate-600">{t('host.walkin.gallery')}</figcaption>
+                  </figure>
+                )}
                 <button onClick={() => setAdded(null)} className="mt-3 rounded-lg border border-slate-300 px-4 py-2">OK</button>
               </div>
             ) : (

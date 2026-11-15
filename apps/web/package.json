@@ -1,0 +1,26 @@
+{
+  "name": "@pmp/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5174",
+    "build": "vite build",
+    "typecheck": "tsc -p .",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "preact": "^10.29.8",
+    "qrcode.react": "^4.2.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.29.13",
+    "@pmp/shared": "workspace:*",
+    "@preact/preset-vite": "^2.10.6",
+    "@tailwindcss/vite": "^4.3.5",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
+  }
+}

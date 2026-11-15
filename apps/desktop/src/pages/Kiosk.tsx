@@ -1,20 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import { api, useEvents, type PhotoDto } from '../api';
-import { LangToggle, useT } from '../i18n';
+import { LangToggle, money, useT } from '../i18n';
 
 interface KioskState { session: { id: string; code: string } | null; photos: PhotoDto[] }
 
 /** Family-facing touch screen on the secondary monitor: live shots + favourite picking. */
 export function Kiosk() {
-  const { t } = useT();
+  const { t, locale } = useT();
   const [state, setState] = useState<KioskState>({ session: null, photos: [] });
   const [selected, setSelected] = useState<string | null>(null);
   const lastTouch = useRef(0);
+  const [pay, setPay] = useState<{ url: string; amountXof: number } | null>(null);
 
   useEffect(() => { api<KioskState>('GET', '/api/kiosk/state').then(setState, () => {}); }, []);
 
   useEvents({
     'kiosk.state': (s: KioskState) => { setState(s); setSelected(null); },
+    'kiosk.payment': setPay,
     'photo.ready': (p: PhotoDto) => {
       setState((s) => (s.session?.id === p.sessionId && !s.photos.some((x) => x.id === p.id) ? { ...s, photos: [...s.photos, p] } : s));
       // A new shot takes the big frame unless the family touched the screen in the last 8 s.
@@ -40,7 +43,18 @@ export function Kiosk() {
   const favs = photos.filter((p) => p.favorite).length;
 
   return (
-    <div className="flex h-full flex-col bg-[#0b0b0f] text-white" onPointerDown={touch}>
+    <div className="relative flex h-full flex-col bg-[#0b0b0f] text-white" onPointerDown={touch}>
+      {pay && (
+        <div className="absolute inset-0 z-10 grid place-items-center bg-black/85" role="dialog" aria-modal="true" aria-label={t('kiosk.pay.title')}>
+          <div className="flex flex-col items-center gap-5 rounded-3xl bg-white p-10 text-slate-900">
+            <p className="text-4xl font-bold">{t('kiosk.pay.title')}</p>
+            <p className="text-5xl font-bold text-brand-600">{money(locale, pay.amountXof)}</p>
+            {/* High contrast, high error correction: phone cameras read it off a bright screen. */}
+            <QRCodeSVG value={pay.url} size={360} level="H" marginSize={4} bgColor="#ffffff" fgColor="#000000" />
+            <p className="text-xl text-slate-600">{t('kiosk.pay.sub')}</p>
+          </div>
+        </div>
+      )}
       <header className="flex items-center gap-4 px-8 py-5">
         <span className="text-xl font-bold text-brand-500">Picture Me Please</span>
         {state.session && photos.length > 0 && (

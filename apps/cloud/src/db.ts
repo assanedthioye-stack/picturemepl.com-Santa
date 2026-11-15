@@ -13,6 +13,7 @@ export function pgDb(url: string): Db {
   const sql = postgres(url, {
     prepare: false, // Supabase's transaction pooler cannot keep prepared statements
     max: 5,
+    onnotice: () => {},
     // Epoch-ms bigints and counts fit in a JS number.
     types: { bigint: { to: 20, from: [20], parse: (v: string) => Number(v), serialize: (v: number) => String(v) } },
   });

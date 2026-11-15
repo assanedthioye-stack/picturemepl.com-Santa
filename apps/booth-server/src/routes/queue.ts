@@ -61,18 +61,21 @@ const WalkIn = z.object({
   partySize: z.number().int().min(1).max(20).default(1),
 });
 
-export function queueRoutes({ db, hub, boothId, config }: Deps): Router {
+export function queueRoutes({ db, hub, boothId, config, syncNow }: Deps): Router {
   const r = Router();
   const changed = () => hub.send('queue.updated', queueList(db));
 
   r.get('/api/queue', requirePerm('session.dispatch'), (_req, res) => res.json(queueList(db)));
 
   // QR scan or typed code → appointment joins the queue ahead of walk-ins.
-  r.post('/api/queue/check-in', requirePerm('session.dispatch'), (req, res) => {
+  r.post('/api/queue/check-in', requirePerm('session.dispatch'), async (req, res) => {
     const code = extractBookingCode(CheckIn.parse(req.body).code);
     if (!code) throw new HttpError(400, 'invalid_code');
     const user = staffOf(req);
-    const b = db.select().from(schema.bookings).where(eq(schema.bookings.code, code)).get();
+    const find = () => db.select().from(schema.bookings).where(and(eq(schema.bookings.code, code), eq(schema.bookings.boothId, boothId))).get()
+      ?? db.select().from(schema.bookings).where(eq(schema.bookings.code, code)).get();
+    let b = find();
+    if (!b && syncNow) { await syncNow().catch(() => {}); b = find(); } // booked online moments ago
     if (!b) throw new HttpError(404, 'booking_not_found');
     if (b.boothId !== boothId) throw new HttpError(409, 'booking_other_booth');
     const existing = db.select().from(Q).where(eq(Q.bookingId, b.id)).get();

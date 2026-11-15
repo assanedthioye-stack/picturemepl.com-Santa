@@ -96,12 +96,26 @@ describe('online booking → booth → gallery', () => {
   });
 });
 
+describe('booked a minute ago', () => {
+  it('the host finds it at once: an unknown code triggers a pull', async () => {
+    const slot = (await cloud.call('GET', `/api/slots?eventId=${cloud.sn.eventId}&date=${cloud.today}`)).json[2];
+    const fresh = (await cloud.call('POST', '/api/bookings', { slotId: slot.id, packageCode: 'numerique', fullName: 'Famille Fall', phone: '77 222 33 44', phoneCountry: 'SN' })).json;
+    cloud.cinet.state.next = { status: 'succeeded', amountXof: 5_000, raw: {} };
+    await cloud.call('POST', `/api/bookings/${fresh.token}/pay`, { method: 'wave' });
+    await cloud.call('GET', `/api/bookings/${fresh.token}`);
+    const host = await staff('host');
+    expect((await host.post('/api/queue/check-in', { code: fresh.code })).status).toBe(201); // no tick before
+  });
+});
+
 describe('walk-in paying by Wave at the cashier, through the cloud', () => {
   it('starts the payment, shows the QR on the kiosk, and the verify button settles it', async () => {
     const host = await staff('host');
     const w = await (await host.post('/api/queue/walk-in', { fullName: 'Famille Sarr', phone: '77 111 22 33', country: 'SN' })).json();
     expect(w.galleryUrl).toMatch(/^https:\/\/web\.test\/b\/[A-Za-z0-9_-]{22}$/);
-    const [entry] = await (await host.get('/api/queue')).json();
+    const queue = await (await host.get('/api/queue')).json();
+    expect(queue.map((e: any) => e.name)).toEqual(['Famille Fall', 'Famille Sarr']); // appointment first
+    const entry = queue[1];
     const session = await (await host.post(`/api/queue/${entry.id}/send`)).json();
     const ph = await staff('photographer');
     await ph.post(`/api/sessions/${session.id}/arm`);
