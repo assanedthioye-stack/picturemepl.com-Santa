@@ -1,31 +1,25 @@
 <!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Picture Me Please</title><link rel="stylesheet" href="/style.css"></head><body><main>
 <div class="top"><h1>Accueil</h1><button class="alt" onclick="toggleLang()" data-t="lang"></button></div>
-<div class="card"><input id="staff" data-tp="staff_name" maxlength="40" autocomplete="name"></div>
 <div class="card"><input id="code" data-tp="code" autocapitalize="characters" maxlength="8"><button id="ci" data-t="check_in"></button> <button class="alt" id="scan" data-t="scan"></button><video id="v" playsinline hidden style="width:100%"></video><p id="msg"></p></div>
 <div class="card"><h2 data-t="walkin"></h2><input id="wn" data-tp="name" maxlength="80"><input id="wp" data-tp="phone" type="tel" maxlength="20"><label class="row"><input type="checkbox" id="wc"><span data-t="consent"></span></label><button id="wa" data-t="add"></button><p id="wmsg"></p></div>
 <div class="card"><div class="top"><h2 data-t="queue"></h2><button id="next" data-t="next"></button></div><div id="q"></div></div>
 </main><script src="/app.js"></script><script>
-$('#staff').value = store.get('staff') || '';
-$('#staff').oninput = () => store.set('staff', $('#staff').value.trim());
-// Every host action carries the host's name, so the dashboard can show who did what.
-const me = () => { const n = $('#staff').value.trim(); if (!n) { $('#staff').focus(); throw new Error('name required'); } return n; };
 const say = (id, m, bad) => { const e = $(id); e.textContent = m; e.className = bad ? 'err' : 'good'; };
 async function checkIn(code) {
-  try { const r = await api('POST', '/api/checkin', { code: code.trim().toUpperCase(), mall, staff: me() });
+  try { const r = await api('POST', '/api/checkin', { code: code.trim().toUpperCase(), mall });
     say('#msg', `${t(r.kind === 'walkin' ? 'walkin_k' : 'appointment')} · #${r.position}`); $('#code').value = ''; refresh(); }
   catch (e) { say('#msg', errText(e.message), 1); }
 }
 $('#ci').onclick = () => checkIn($('#code').value);
 $('#wa').onclick = async () => {
-  try { const r = await api('POST', '/api/walkin', { mall, staff: me(), name: $('#wn').value, phone: $('#wp').value, consent: $('#wc').checked });
+  try { const r = await api('POST', '/api/walkin', { mall, name: $('#wn').value, phone: $('#wp').value, consent: $('#wc').checked });
     say('#wmsg', r.code); $('#wn').value = $('#wp').value = ''; $('#wc').checked = false; refresh(); }
   catch (e) { say('#wmsg', errText(e.message), 1); }
 };
 $('#next').onclick = async () => {
   try {
-    const staff = me();
-    try { await api('POST', '/api/next', { mall, staff }); }
-    catch (e) { if (e.message !== 'unpaid order' || !confirm(t('unpaid_confirm'))) throw e; await api('POST', '/api/next', { mall, staff, force: true }); }
+    try { await api('POST', '/api/next', { mall }); }
+    catch (e) { if (e.message !== 'unpaid order' || !confirm(t('unpaid_confirm'))) throw e; await api('POST', '/api/next', { mall, force: true }); }
     say('#msg', '', 0); refresh();
   } catch (e) { say('#msg', errText(e.message), 1); }
 };
@@ -49,5 +43,5 @@ async function refresh() {
   } catch (e) { $('#q').textContent = errText(e.message); }
 }
 window.render = refresh; applyI18n();
-initMall().then(() => { refresh(); setInterval(refresh, 4000); }).catch((e) => say('#msg', errText(e.message), 1));
+initMall().then(whoami).then(() => { refresh(); setInterval(refresh, 4000); }).catch((e) => say('#msg', errText(e.message), 1));
 </script></body></html>

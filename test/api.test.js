@@ -6,7 +6,7 @@ const path = require('node:path');
 const sharp = require('sharp');
 const { openDb } = require('../server/db');
 const jpeg = () => sharp({ create: { width: 1600, height: 1200, channels: 3, background: '#808080' } }).jpeg().toBuffer();
-const { createServer } = require('../server/app');
+const { serve } = require('./serve');
 const { dailySales } = require('../server/admin');
 
 const PINS = { host: 'h111', photographer: 'p111', cashier: 'c111', monitor: 'm111', admin: 'a111' };
@@ -14,7 +14,7 @@ async function boot() {
   const db = openDb();
   db.prepare("INSERT INTO malls(id,name,country) VALUES(1,'M','SN')").run();
   db.prepare("INSERT INTO slots(id,mall_id,start_at,capacity) VALUES(1,1,?,5)").run(new Date().toISOString());
-  const srv = createServer({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
+  const srv = serve({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
   await new Promise((r) => srv.listen(0, r));
   const base = 'http://localhost:' + srv.address().port;
   const call = async (method, url, body, pin, raw) => {

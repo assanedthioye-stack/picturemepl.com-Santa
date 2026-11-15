@@ -1,6 +1,5 @@
 <!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Picture Me Please</title><link rel="stylesheet" href="/style.css"></head><body><main>
 <div class="top"><h1>Photographe</h1><button class="alt" onclick="toggleLang()" data-t="lang"></button></div>
-<div class="card"><input id="staff" data-tp="staff_name" maxlength="40" autocomplete="name"><p id="smsg" class="err"></p></div>
 <div class="card"><p data-t="now"></p><div class="big" id="who"></div><div class="code" id="code"></div><div class="big" id="n"></div></div>
 </main><script src="/app.js"></script><script>
 async function refresh() {
@@ -9,14 +8,6 @@ async function refresh() {
     $('#n').textContent = a ? (await api('GET', '/api/gallery/' + a.code)).length + ' ' + t('photos') : '';
   } catch (e) { $('#who').textContent = errText(e.message); $('#code').textContent = $('#n').textContent = ''; }
 }
-// The photographer signs in by name; photos taken from then on are credited to them.
-$('#staff').value = store.get('staff') || '';
-async function signIn() {
-  const name = $('#staff').value.trim(); store.set('staff', name);
-  if (!name) { $('#smsg').textContent = t('e_name required'); return; }
-  try { await api('POST', '/api/staff', { mall, name }); $('#smsg').textContent = ''; } catch (e) { $('#smsg').textContent = errText(e.message); }
-}
-$('#staff').onchange = signIn;
 window.render = refresh; applyI18n();
-initMall().then(() => { signIn(); refresh(); setInterval(refresh, 2000); }).catch((e) => { $('#who').textContent = errText(e.message); });
+initMall().then(whoami).then(() => { refresh(); setInterval(refresh, 2000); }).catch((e) => { $('#who').textContent = errText(e.message); });
 </script></body></html>

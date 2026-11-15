@@ -19,7 +19,7 @@ async function makePreview(bytes) {
   return sharp(data).composite([{ input: Buffer.from(svg) }]).jpeg({ quality: 72 }).toBuffer(); // metadata (EXIF, GPS) is dropped
 }
 
-async function ingest(db, dir, mallId, filename, bytes, expectedCode) {
+async function ingest(db, dir, mallId, filename, bytes, expectedCode, photographer = null) {
   const base = path.basename(String(filename || '')).replace(/[^\w.-]/g, '_');
   if (!IMAGE.test(base) || !bytes || !bytes.length) throw new Error('bad file'); // images only
   let preview;
@@ -31,7 +31,8 @@ async function ingest(db, dir, mallId, filename, bytes, expectedCode) {
   fs.mkdirSync(path.join(dir, f.code), { recursive: true });
   fs.writeFileSync(path.join(dir, f.code, file), bytes);
   fs.writeFileSync(path.join(dir, f.code, previewName(file)), preview);
-  const by = db.prepare("SELECT name FROM presence WHERE mall_id=? AND role='photographer'").get(mallId)?.name || null; // who is signed in at the camera
+  // Credited to the owner of the PIN that uploaded it; otherwise to whoever is signed in at that mall's camera.
+  const by = photographer || db.prepare("SELECT name FROM presence WHERE mall_id=? AND role='photographer'").get(mallId)?.name || null;
   db.prepare('INSERT INTO photos(code,file,created_at,photographer) VALUES(?,?,?,?)').run(f.code, file, new Date().toISOString(), by);
   return { code: f.code, file };
 }

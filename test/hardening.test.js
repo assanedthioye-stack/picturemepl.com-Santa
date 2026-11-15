@@ -7,7 +7,7 @@ const net = require('node:net');
 const sharp = require('sharp');
 const { openDb } = require('../server/db');
 const jpeg = () => sharp({ create: { width: 1600, height: 1200, channels: 3, background: '#808080' } }).jpeg().toBuffer();
-const { createServer } = require('../server/app');
+const { serve } = require('./serve');
 const { listSlots, book, cancel } = require('../server/booking');
 const { checkIn, addWalkIn, serveNext } = require('../server/queue');
 const { saveCart, pay } = require('../server/orders');
@@ -22,7 +22,7 @@ function db2() {
 }
 async function boot(db = db2()) {
   const errors = [];
-  const srv = createServer({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS, log: (...a) => errors.push(a) });
+  const srv = serve({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS, log: (...a) => errors.push(a) });
   await new Promise((r) => srv.listen(0, r));
   const base = 'http://localhost:' + srv.address().port;
   const call = async (method, url, body, pin, raw) => {

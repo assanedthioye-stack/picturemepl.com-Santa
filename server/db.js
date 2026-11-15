@@ -16,6 +16,7 @@ function openDb(path = ':memory:') {
     CREATE TABLE IF NOT EXISTS queue(id INTEGER PRIMARY KEY, mall_id INTEGER, booking_id INTEGER, code TEXT UNIQUE, name TEXT, phone TEXT, kind TEXT, sort_at TEXT, checked_in_at TEXT, state TEXT DEFAULT 'waiting', served_at TEXT);
     CREATE TABLE IF NOT EXISTS photos(id INTEGER PRIMARY KEY, code TEXT, file TEXT, created_at TEXT);
     CREATE TABLE IF NOT EXISTS orders(id INTEGER PRIMARY KEY, code TEXT UNIQUE, items_json TEXT, files_json TEXT, lines_json TEXT, total INTEGER, method TEXT, provider TEXT, reference TEXT, amount_received INTEGER, paid_at TEXT, cashier TEXT, print_state TEXT DEFAULT 'none', download_expires_at TEXT, download_token TEXT);
+    CREATE TABLE IF NOT EXISTS staff(id INTEGER PRIMARY KEY, name TEXT, role TEXT, pin_hmac TEXT UNIQUE, active INTEGER DEFAULT 1, created_at TEXT);
     CREATE TABLE IF NOT EXISTS presence(mall_id INTEGER, role TEXT, name TEXT, seen_at TEXT, PRIMARY KEY(mall_id, role));
     CREATE TABLE IF NOT EXISTS prices(country TEXT, item TEXT, amount INTEGER, PRIMARY KEY(country,item));
   `);

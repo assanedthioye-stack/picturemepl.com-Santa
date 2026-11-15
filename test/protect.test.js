@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const sharp = require('sharp');
 const { openDb } = require('../server/db');
-const { createServer } = require('../server/app');
+const { serve } = require('./serve');
 const { addWalkIn, serveNext } = require('../server/queue');
 const { saveCart, pay } = require('../server/orders');
 const { makePreview } = require('../server/photos');
@@ -17,7 +17,7 @@ async function boot() {
   const db = openDb();
   db.prepare("INSERT INTO malls(id,name,country) VALUES(1,'Dakar','SN')").run();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-'));
-  const srv = createServer({ db, dir, pins: PINS });
+  const srv = serve({ db, dir, pins: PINS });
   await new Promise((r) => srv.listen(0, r));
   const base = 'http://localhost:' + srv.address().port;
   const get = async (url, pin) => { const r = await fetch(base + url, { headers: { 'x-pin': pin || '' } }); return { status: r.status, type: r.headers.get('content-type'), buf: Buffer.from(await r.arrayBuffer()) }; };

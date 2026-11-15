@@ -11,7 +11,12 @@ Env: `PINS` (required, one PIN per role), `PORT` (default 3000), `DATA_DIR` (def
 
 ## Pages
 `/` (public booking), `/host.html`, `/photographer.html`, `/monitor.html`, `/cashier.html`, `/admin.html`, `/dashboard.html`.
-Staff pages ask for their role's PIN (the admin PIN works everywhere). With several malls, each device asks which mall once and remembers it. The cashier types their name once; it is recorded on every payment.
+With several malls, each device asks which mall once and remembers it.
+
+## PINs
+- **Personal PINs:** every host, photographer, cashier (and extra admin) has their own 6-digit PIN, created on the admin page under "Personnel". It is shown once; reset or deactivate it there. Every action is credited to the PIN's owner.
+- **Device PINs** (in the `PINS` setting): `admin` (master admin), `monitor` (customer screen), optional `printer` (print script). Shared PINs for host, photographer and cashier are ignored.
+- PINs are stored only as keyed hashes; the key is in `DATA_DIR/pin.key`. Keep that file with the database when moving servers.
 
 ## Photo protection
 - Every screen (customer monitor, cashier, host) receives only a small watermarked preview (1000 px, `PICTURE ME PLEASE` across the image).
@@ -20,8 +25,7 @@ Staff pages ask for their role's PIN (the admin PIN works everywhere). With seve
 - A screenshot of the watermarked preview cannot be prevented by any website.
 
 ## Security notes
-- Optional `printer` PIN in `PINS` for the print script; without it, use the admin PIN.
-- `PINS` must hold a different PIN of 4+ characters for each role; the server refuses to start otherwise.
+- `PINS` must hold different PINs of 4+ characters for `admin` and `monitor` (and `printer` if set); the server refuses to start otherwise.
 - PINs travel in a request header only, never in a URL. 20 wrong PINs from one address lock that address out for 10 minutes.
 - Run behind HTTPS (Hostinger provides it).
 
@@ -29,7 +33,7 @@ Staff pages ask for their role's PIN (the admin PIN works everywhere). With seve
 On the admin page (`/admin.html`): add the mall, then create its time slots with the one-step form (local time).
 
 ## At the mall
-- Photographer laptop: `node tools/uploader.js <cameraFolder> <serverUrl> <photographerPin> <mallId>`
+- Photographer laptop: `node tools/uploader.js <cameraFolder> <serverUrl> <photographer's personal PIN> <mallId>`
 - Print PC: `node tools/print-agent.js <serverUrl> <printerPin> <mallId> <printerHotFolder>` (downloads the clean photos of paid orders only)
 
 ## Before launch

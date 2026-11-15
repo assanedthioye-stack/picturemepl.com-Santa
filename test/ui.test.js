@@ -7,7 +7,7 @@ const { chromium } = require('playwright');
 const sharp = require('sharp');
 const { openDb } = require('../server/db');
 const jpeg = () => sharp({ create: { width: 1600, height: 1200, channels: 3, background: '#808080' } }).jpeg().toBuffer();
-const { createServer } = require('../server/app');
+const { serve } = require('./serve');
 
 const PINS = { host: 'h111', photographer: 'p111', cashier: 'c111', monitor: 'm111', admin: 'a111' };
 
@@ -15,7 +15,7 @@ test('family books, host checks in, photo, monitor picks Famille, cashier takes 
   const db = openDb();
   db.prepare("INSERT INTO malls(id,name,country) VALUES(1,'Sea Plaza','SN')").run();
   db.prepare('INSERT INTO slots(id,mall_id,start_at,capacity) VALUES(1,1,?,3)').run(new Date().toISOString());
-  const srv = createServer({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
+  const srv = serve({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
   await new Promise((r) => srv.listen(0, r));
   const base = 'http://localhost:' + srv.address().port;
   const browser = await chromium.launch();
@@ -36,7 +36,7 @@ test('family books, host checks in, photo, monitor picks Famille, cashier takes 
     if (process.env.SHOTS) await book.screenshot({ path: process.env.SHOTS + '/book.png' });
 
     const host = await open('/host.html?mall=1', 'h111');
-    await host.fill('#staff', 'Fatou'); await host.fill('#code', code); await host.click('#ci');
+    await host.fill('#code', code); await host.click('#ci');
     await host.waitForSelector('#msg.good');
     await host.click('#next');
     await host.waitForSelector('.q.serving');
@@ -53,7 +53,7 @@ test('family books, host checks in, photo, monitor picks Famille, cashier takes 
 
     const cash = await open('/cashier.html?mall=1', 'c111');
     await cash.waitForSelector('#o:not([hidden])');
-    await cash.fill('#who', 'Amy'); await cash.fill('#recv', '10000');
+    await cash.fill('#recv', '10000');
     await cash.click('#pay');
     await cash.waitForFunction(() => document.querySelector('#msg').textContent.includes('✓'));
 
@@ -67,7 +67,7 @@ test('a parent name with HTML is shown as text on the host screen', async () => 
   const db = openDb();
   db.prepare("INSERT INTO malls(id,name,country) VALUES(1,'M','SN')").run();
   db.prepare('INSERT INTO slots(id,mall_id,start_at,capacity) VALUES(1,1,?,3)').run(new Date().toISOString());
-  const srv = createServer({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
+  const srv = serve({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
   await new Promise((r) => srv.listen(0, r));
   const base = 'http://localhost:' + srv.address().port;
   const post = (u, b, pin) => fetch(base + u, { method: 'POST', headers: { 'x-pin': pin || '' }, body: JSON.stringify(b) }).then((r) => r.json());
@@ -94,7 +94,7 @@ test('dashboard page shows KPIs from seeded sales', async () => {
   db.prepare("INSERT INTO photos(code,file) VALUES(?,'1_a.jpg')").run(code);
   saveCart(db, code, [{ item: 'famille', qty: 1 }], ['1_a.jpg']);
   pay(db, code, { method: 'cash', amountReceived: 10000, expectedTotal: 10000, cashier: 'amy' });
-  const srv = createServer({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
+  const srv = serve({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
   await new Promise((r) => srv.listen(0, r));
   const browser = await chromium.launch();
   try {
@@ -111,7 +111,7 @@ test('dashboard page shows KPIs from seeded sales', async () => {
 test('dashboard draws trend charts and downloads the orders CSV', async () => {
   const { seed } = require('./seed');
   const db = seed();
-  const srv = createServer({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
+  const srv = serve({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
   await new Promise((r) => srv.listen(0, r));
   const browser = await chromium.launch();
   try {
@@ -133,7 +133,7 @@ test('dashboard draws trend charts and downloads the orders CSV', async () => {
 test('admin creates a whole day of slots from one simple form, and families can then book', async () => {
   const db = openDb();
   db.prepare("INSERT INTO malls(id,name,country) VALUES(1,'Francoise Garden','SN')").run();
-  const srv = createServer({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
+  const srv = serve({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
   await new Promise((r) => srv.listen(0, r));
   const base = 'http://localhost:' + srv.address().port;
   const browser = await chromium.launch();
@@ -159,7 +159,7 @@ test('admin creates a whole day of slots from one simple form, and families can 
 test('admin shows the price list pre-filled for the mall country; editing a price saves on change', async () => {
   const db = openDb();
   db.prepare("INSERT INTO malls(id,name,country) VALUES(1,'Cotonou','BJ'),(2,'Dakar','SN')").run();
-  const srv = createServer({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
+  const srv = serve({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
   await new Promise((r) => srv.listen(0, r));
   const browser = await chromium.launch();
   try {
@@ -184,7 +184,7 @@ test('with several malls a staff page asks which mall once, then remembers it', 
   db.prepare("INSERT INTO malls(id,name,country) VALUES(1,'Dakar','SN'),(2,'Cotonou','BJ')").run();
   const { addWalkIn } = require('../server/queue');
   addWalkIn(db, 2, { name: 'Benin family', phone: '', consent: true });
-  const srv = createServer({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
+  const srv = serve({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
   await new Promise((r) => srv.listen(0, r));
   const browser = await chromium.launch();
   try {
@@ -207,7 +207,7 @@ test('after a paid digital sale the cashier shows a QR; the family page download
   const db = openDb();
   db.prepare("INSERT INTO malls(id,name,country) VALUES(1,'Dakar','SN')").run();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-'));
-  const srv = createServer({ db, dir, pins: PINS });
+  const srv = serve({ db, dir, pins: PINS });
   await new Promise((r) => srv.listen(0, r));
   const base = 'http://localhost:' + srv.address().port;
   const code = addWalkIn(db, 1, { name: 'A', phone: '', consent: true }).code;
@@ -223,7 +223,7 @@ test('after a paid digital sale the cashier shows a QR; the family page download
     await cash.goto(base + '/cashier.html');
     await cash.waitForSelector('#o:not([hidden])');
     assert.equal(await cash.isVisible('#deliv'), false); // nothing to hand over before payment
-    await cash.fill('#who', 'Amy'); await cash.fill('#recv', '5000'); await cash.click('#pay');
+    await cash.fill('#recv', '5000'); await cash.click('#pay');
     await cash.waitForSelector('#deliv:not([hidden])');
     const url = await cash.textContent('#durl');
     assert.equal(await cash.locator('a[download]').count(), 0); // the cashier screen itself offers no download
@@ -245,7 +245,7 @@ test('dashboard shows the team: who is on duty and what each host, photographer 
   db.prepare("INSERT INTO photos(code,file,photographer) VALUES(?,'1_a.jpg','Awa')").run(code);
   saveCart(db, code, [{ item: 'famille', qty: 1 }], ['1_a.jpg']);
   pay(db, code, { method: 'cash', amountReceived: 10000, expectedTotal: 10000, cashier: 'Amy' });
-  const srv = createServer({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
+  const srv = serve({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
   await new Promise((r) => srv.listen(0, r));
   const browser = await chromium.launch();
   try {
@@ -258,5 +258,36 @@ test('dashboard shows the team: who is on duty and what each host, photographer 
     assert.ok(duty.includes('Fatou') && duty.includes('Awa') && duty.includes('Amy'));
     assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true); // no sideways scroll on a phone
     if (process.env.SHOTS) await p.locator('#duty').locator('xpath=..').screenshot({ path: process.env.SHOTS + '/team.png' });
+  } finally { await browser.close(); srv.close(); }
+});
+
+test('admin creates a host with a personal PIN; that PIN signs in and the old shared PIN does not', async () => {
+  const { createServer } = require('../server/app');
+  const db = openDb();
+  db.prepare("INSERT INTO malls(id,name,country) VALUES(1,'Dakar','SN')").run();
+  const srv = createServer({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS, secret: 's' });
+  await new Promise((r) => srv.listen(0, r));
+  const base = 'http://localhost:' + srv.address().port;
+  const browser = await chromium.launch();
+  try {
+    const adm = await browser.newPage();
+    adm.on('dialog', (d) => d.accept('a111'));
+    await adm.goto(base + '/admin.html');
+    await adm.fill('#stname', 'Fatou'); await adm.selectOption('#strole', 'host'); await adm.click('#stadd');
+    await adm.waitForSelector('#stmsg b');
+    const pin = (await adm.textContent('#stmsg b')).trim();
+    assert.match(pin, /^\d{6}$/);
+    assert.ok((await adm.textContent('#stlist')).includes('Fatou'));
+    assert.ok(!(await adm.textContent('#stlist')).includes(pin)); // never listed afterwards
+
+    const host = await (await browser.newContext()).newPage();
+    host.on('dialog', (d) => d.accept(pin));
+    await host.goto(base + '/host.html');
+    await host.waitForSelector('#signout');
+    assert.ok((await host.textContent('main')).includes('Fatou'));
+    await host.fill('#wn', 'Famille Test'); await host.check('#wc'); await host.click('#wa');
+    await host.waitForSelector('.q');
+    assert.equal(db.prepare('SELECT checked_in_by FROM queue').get().checked_in_by, 'Fatou');
+    assert.equal((await fetch(base + '/api/queue?mall=1', { headers: { 'x-pin': 'h111' } })).status, 401);
   } finally { await browser.close(); srv.close(); }
 });

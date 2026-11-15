@@ -11,6 +11,7 @@ const orders = require('./orders');
 const admin = require('./admin');
 const stats = require('./stats');
 const exp = require('./export');
+const staff = require('./staff');
 
 const PUBLIC = path.resolve(__dirname, '..', 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -18,7 +19,7 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 // Errors the modules raise on purpose, and the status each one maps to. Anything else is a bug: logged, answered as 500.
 const KNOWN = {
   consent: 400, 'name and phone required': 400, 'name required': 400, 'bad day': 400, 'bad item': 400, 'bad amount': 400, 'bad slots': 400,
-  'bad mall': 400, 'bad range': 400, 'bad country': 400, 'bad file': 400, 'bad json': 400, 'invalid payment': 400, 'photo not in gallery': 400,
+  'bad mall': 400, 'bad staff': 400, 'unknown staff': 404, 'bad range': 400, 'bad country': 400, 'bad file': 400, 'bad json': 400, 'invalid payment': 400, 'photo not in gallery': 400,
   'no photos': 400, 'no cart': 404, 'unknown code': 404, 'unknown slot': 404, 'unknown mall': 404, 'unknown price': 404, 'not found': 404,
   full: 409, past: 409, 'already paid': 409, 'total changed': 409, 'unpaid order': 409, 'no active family': 409, 'wrong mall': 409,
   'too large': 413, 'too many attempts': 429, pin: 401,
@@ -40,10 +41,28 @@ function limiter(max, windowMs) {
   };
 }
 
-function createServer({ db, dir, pins, log = console.error }) {
-  const roles = Object.entries(pins).filter(([, p]) => typeof p === 'string' && p.length >= 4);
+// pins: device PINs only. `admin` is the master admin, `monitor` the customer screen, `printer` the print script.
+// Hosts, photographers and cashiers sign in with their own personal PIN (see staff.js); shared PINs for those roles are ignored.
+const DEVICE_ROLES = ['admin', 'monitor', 'printer'];
+function createServer({ db, dir, pins, secret, log = console.error }) {
+  if (!secret) throw new Error('createServer needs a secret for personal PINs');
+  const roles = Object.entries(pins).filter(([r, p]) => DEVICE_ROLES.includes(r) && typeof p === 'string' && p.length >= 4);
+  const reserved = roles.map(([, p]) => p);
   const same = (a, b) => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && crypto.timingSafeEqual(x, y); };
-  const roleOf = (pin) => roles.find(([, p]) => same(p, pin))?.[0];
+  // Who a PIN belongs to: a device, or a person. null = nobody.
+  const identify = (pin) => {
+    const device = roles.find(([, p]) => same(p, pin))?.[0];
+    if (device) return { role: device, name: device === 'admin' ? 'Admin' : device };
+    return staff.find(db, secret, pin);
+  };
+  const seen = new Map(); // presence is refreshed at most every 30 s per person and mall, not on every poll
+  const onDuty = (who, mallId) => {
+    if (!['host', 'photographer', 'cashier'].includes(who.role)) return;
+    const key = `${mallId}:${who.role}:${who.name}`;
+    if (Date.now() - (seen.get(key) || 0) < 30000) return;
+    seen.set(key, Date.now());
+    queue.setPresence(db, mallId, who.role, who.name);
+  };
   const badPins = limiter(20, 10 * 60000); // PIN guessing
   const bookings = limiter(60, 60 * 60000); // slot-hoarding by one address
 
@@ -77,28 +96,28 @@ function createServer({ db, dir, pins, log = console.error }) {
       return out;
     }],
     'POST /api/cancel': [null, async ({ req }) => { booking.cancel(db, (await json(req)).code); return {}; }],
-    'POST /api/checkin': [['host'], async ({ req }) => { const b = await json(req); return queue.checkIn(db, b.code, new Date(), mallById(db, int(b.mall)).id, b.staff); }],
-    'POST /api/walkin': [['host'], async ({ req }) => { const b = await json(req); return queue.addWalkIn(db, int(b.mall), b); }],
+    'POST /api/checkin': [['host'], async ({ req, who }) => { const b = await json(req); return queue.checkIn(db, b.code, new Date(), mallById(db, int(b.mall)).id, who.name); }],
+    'POST /api/walkin': [['host'], async ({ req, who }) => { const b = await json(req); return queue.addWalkIn(db, int(b.mall), { ...b, staff: who.name }); }],
     'GET /api/queue': [['host'], ({ q }) => queue.getQueue(db, mallById(db, int(q('mall'))).id)],
-    'GET /api/active': [['monitor', 'photographer', 'host', 'cashier'], ({ q }) => queue.active(db, mallById(db, int(q('mall'))).id)],
-    'POST /api/next': [['host'], async ({ req }) => { const b = await json(req); return queue.serveNext(db, int(b.mall), { force: b.force === true, staff: b.staff }); }],
-    'POST /api/staff': [['photographer'], async ({ req }) => { // the photographer signs in, so their photos are credited to them
-      const b = await json(req);
-      if (!queue.setPresence(db, mallById(db, int(b.mall)).id, 'photographer', b.name)) throw new Error('name required');
-      return {};
-    }],
-    'POST /api/photos': [['photographer'], async ({ req, q }) => {
+    'GET /api/active': [['monitor', 'photographer', 'host', 'cashier'], ({ q, who }) => { const mall = mallById(db, int(q('mall'))).id; onDuty(who, mall); return queue.active(db, mall); }],
+    'GET /api/me': [['monitor', 'photographer', 'host', 'cashier', 'printer'], ({ who }) => ({ name: who.name, role: who.role })],
+    'POST /api/next': [['host'], async ({ req, who }) => { const b = await json(req); return queue.serveNext(db, int(b.mall), { force: b.force === true, staff: who.name }); }],
+    'POST /api/photos': [['photographer'], async ({ req, q, who }) => {
       const mall = mallById(db, int(q('mall'))).id;
       const serving = queue.active(db, mall)?.code; // read BEFORE the slow body, so a shot can't land on the next family
       const bytes = await readBody(req, MAX_PHOTO);
-      return await photos.ingest(db, dir, mall, q('name'), bytes, serving || 'none');
+      return await photos.ingest(db, dir, mall, q('name'), bytes, serving || 'none', who.name);
     }],
     'POST /api/cart': [['monitor', 'cashier'], async ({ req }) => { const b = await json(req); return orders.saveCart(db, b.code, b.items, b.files || []); }],
     'GET /api/order': [['monitor', 'cashier'], ({ q }) => orders.getOrder(db, q('code'))],
-    'POST /api/pay': [['cashier'], async ({ req }) => { const b = await json(req); return orders.pay(db, b.code, b); }],
+    'POST /api/pay': [['cashier'], async ({ req, who }) => { const b = await json(req); return orders.pay(db, b.code, { ...b, cashier: who.name }); }],
     'GET /api/print/next': [['printer'], ({ q }) => orders.nextPrintJob(db, mallById(db, int(q('mall'))).id)],
     'POST /api/print/done': [['printer'], async ({ req }) => { orders.markPrinted(db, (await json(req)).code); return {}; }],
     'GET /api/delivery': [['cashier'], ({ q, origin }) => { const d = orders.deliveryFor(db, q('code')); return { ...d, url: `${origin}/get.html#${d.token}` }; }],
+    'GET /api/admin/staff': [[], () => staff.list(db)],
+    'POST /api/admin/staff': [[], async ({ req }) => { const b = await json(req); return staff.create(db, secret, { name: b.name, role: b.role }, reserved); }],
+    'POST /api/admin/staff/reset': [[], async ({ req }) => staff.resetPin(db, secret, int((await json(req)).id), reserved)],
+    'POST /api/admin/staff/active': [[], async ({ req }) => { const b = await json(req); staff.setActive(db, int(b.id), b.active === true); return {}; }],
     'GET /api/admin/files': [[], ({ q }) => orders.adminFiles(db, q('code'))],
     'PUT /api/admin/prices': [[], async ({ req }) => { const b = await json(req); admin.setPrice(db, b.country, b.item, b.amount); return {}; }],
     'POST /api/admin/malls': [[], async ({ req }) => { const b = await json(req); admin.addMall(db, b.name, b.country); return {}; }],
@@ -119,10 +138,10 @@ function createServer({ db, dir, pins, log = console.error }) {
       const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '';
       const pin = String(req.headers['x-pin'] || ''); // header only: a PIN in a URL ends up in logs and history
       const allowed = (need) => {
-        if (need === null) return;
+        if (need === null) return null;
         if (badPins.blocked(ip)) throw new Error('too many attempts');
-        const role = roleOf(pin);
-        if (role && (role === 'admin' || need.includes(role))) return;
+        const who = identify(pin);
+        if (who && (who.role === 'admin' || need.includes(who.role))) return who;
         badPins.hit(ip);
         throw new Error('pin');
       };
@@ -130,7 +149,7 @@ function createServer({ db, dir, pins, log = console.error }) {
       // Public address of this site, for the family link. Hosting puts the real scheme in x-forwarded-proto.
       const host = /^[\w.:-]{1,100}$/.test(String(req.headers.host || '')) ? req.headers.host : 'localhost';
       const origin = `${String(req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim() === 'https' ? 'https' : 'http'}://${host}`;
-      if (route) { allowed(route[0]); return send(200, await route[1]({ req, q, ip, origin })); }
+      if (route) { const who = allowed(route[0]); return send(200, await route[1]({ req, q, ip, origin, who })); }
 
       if (req.method === 'GET') {
         let m;

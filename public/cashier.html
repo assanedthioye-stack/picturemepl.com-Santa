@@ -1,6 +1,6 @@
 <!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Picture Me Please</title><link rel="stylesheet" href="/style.css"></head><body><main>
 <div class="top"><h1>Caisse</h1><button class="alt" onclick="toggleLang()" data-t="lang"></button></div>
-<div class="card"><input id="who" data-tp="cashier_name" maxlength="40" autocomplete="name"><input id="code" data-tp="code" autocapitalize="characters" maxlength="8"><button id="load" data-t="load"></button><p id="lmsg" class="err"></p></div>
+<div class="card"><input id="code" data-tp="code" autocapitalize="characters" maxlength="8"><button id="load" data-t="load"></button><p id="lmsg" class="err"></p></div>
 <div class="card" id="o" hidden><div id="lines"></div><div class="tot" id="tot"></div><p id="nph"></p>
 <div id="payform"><h2 data-t="method"></h2>
 <label class="row"><input type="radio" name="m" value="cash" checked><span data-t="cash"></span></label>
@@ -22,15 +22,14 @@ async function delivery() {
     $('#dqr').src = URL.createObjectURL(await r.blob()); $('#durl').textContent = d.url; $('#deliv').hidden = false; }
   catch (e) { $('#deliv').hidden = true; } // print-only order: nothing to hand over
 }
-$('#who').value = store.get('cashier') || '';
 const method = () => document.querySelector('input[name=m]:checked').value;
 function valid() {
-  if (!order || order.paid || busy || !order.photos || !$('#who').value.trim()) return false;
+  if (!order || order.paid || busy || !order.photos) return false;
   return method() === 'cash' ? Number.isInteger(+$('#recv').value) && +$('#recv').value >= order.total : !!$('#ref').value.trim();
 }
 const sync = () => { $('#momo').hidden = method() !== 'mobile_money'; $('#cashf').hidden = method() !== 'cash'; $('#pay').disabled = !valid(); };
 document.querySelectorAll('input[name=m]').forEach((r) => (r.onchange = sync));
-['recv', 'ref', 'who'].forEach((i) => ($('#' + i).oninput = () => { if (i === 'who') store.set('cashier', $('#who').value.trim()); sync(); }));
+['recv', 'ref'].forEach((i) => ($('#' + i).oninput = sync));
 function show() {
   $('#o').hidden = !order;
   if (!order) { delivery(); return; }
@@ -54,7 +53,7 @@ $('#load').onclick = () => load(false);
 $('#pay').onclick = async () => {
   busy = true; sync(); // one tap, one payment
   try { const cash = method() === 'cash';
-    await api('POST', '/api/pay', { code, expectedTotal: order.total, cashier: $('#who').value.trim(), method: method(), provider: cash ? undefined : $('#prov').value, reference: cash ? undefined : $('#ref').value.trim(), amountReceived: cash ? +$('#recv').value : undefined }); }
+    await api('POST', '/api/pay', { code, expectedTotal: order.total, method: method(), provider: cash ? undefined : $('#prov').value, reference: cash ? undefined : $('#ref').value.trim(), amountReceived: cash ? +$('#recv').value : undefined }); }
   catch (e) { $('#msg').textContent = errText(e.message); $('#msg').className = 'err'; }
   busy = false; await load(true);
 };
@@ -69,5 +68,5 @@ async function follow() {
   } catch (e) { /* retried on the next tick */ }
 }
 window.render = show; applyI18n();
-initMall().then(() => { follow(); setInterval(follow, 3000); }).catch((e) => { $('#lmsg').textContent = errText(e.message); });
+initMall().then(whoami).then(() => { follow(); setInterval(follow, 3000); }).catch((e) => { $('#lmsg').textContent = errText(e.message); });
 </script></body></html>
