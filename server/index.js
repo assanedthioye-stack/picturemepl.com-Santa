@@ -41,7 +41,7 @@ function createServer({ db, dir, pins }) {
         'POST /api/checkin': ['host'], 'POST /api/walkin': ['host'], 'GET /api/queue': ['host'], 'POST /api/next': ['host'],
         'POST /api/photos': ['photographer'], 'POST /api/cart': ['monitor', 'cashier'], 'POST /api/pay': ['cashier'],
         'GET /api/order': ['cashier', 'monitor'], 'GET /api/print/next': ['cashier'], 'POST /api/print/done': ['cashier'], 'GET /api/active': ['monitor', 'photographer', 'host', 'cashier'],
-        'PUT /api/admin/prices': [], 'POST /api/admin/slots': [], 'POST /api/admin/malls': [], 'GET /api/admin/sales': [], 'GET /api/admin/dashboard': [], 'GET /api/admin/export': [],
+        'PUT /api/admin/prices': [], 'POST /api/admin/slots': [], 'POST /api/admin/malls': [], 'POST /api/admin/slots/bulk': [], 'GET /api/admin/sales': [], 'GET /api/admin/dashboard': [], 'GET /api/admin/export': [],
       }[route];
       const gal = u.pathname.match(/^\/api\/gallery\/(\w+)$/);
       const ph = u.pathname.match(/^\/photo\/(\w+)\/([\w.-]+)$/);
@@ -79,6 +79,7 @@ function createServer({ db, dir, pins }) {
       }
       if (route === 'PUT /api/admin/prices') { const b = await body(req); admin.setPrice(db, b.country, b.item, b.amount); return send(200, {}); }
       if (route === 'POST /api/admin/malls') { const b = await body(req); admin.addMall(db, b.name, b.country); return send(200, {}); }
+      if (route === 'POST /api/admin/slots/bulk') { const b = await body(req); return send(200, admin.addSlots(db, { ...b, mall: +b.mall, minutes: +b.minutes, capacity: +b.capacity })); }
       if (route === 'POST /api/admin/slots') { const b = await body(req); admin.addSlot(db, +b.mall, b.startAt, +b.capacity); return send(200, {}); }
       if (route === 'GET /api/admin/dashboard') { const today = new Date().toISOString().slice(0, 10); return send(200, stats.dashboard(db, { country: q('country') || '', from: q('from') || today, to: q('to') || today })); }
       if (route === 'GET /api/admin/export') {

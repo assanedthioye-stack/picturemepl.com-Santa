@@ -125,3 +125,29 @@ test('dashboard draws trend charts and downloads the orders CSV', async () => {
     if (process.env.SHOTS) await p.screenshot({ path: process.env.SHOTS + '/dashboard2.png', fullPage: true });
   } finally { await browser.close(); srv.close(); }
 });
+
+test('admin creates a whole day of slots from one simple form, and families can then book', async () => {
+  const db = openDb();
+  db.prepare("INSERT INTO malls(id,name,country) VALUES(1,'Francoise Garden','SN')").run();
+  const srv = createServer({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
+  await new Promise((r) => srv.listen(0, r));
+  const base = 'http://localhost:' + srv.address().port;
+  const browser = await chromium.launch();
+  try {
+    const p = await browser.newPage({ viewport: { width: 390, height: 1100 } });
+    p.on('dialog', (d) => d.accept('a1'));
+    await p.goto(base + '/admin.html');
+    await p.selectOption('#mallsel', '1');
+    const day = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    await p.fill('#from', day); await p.fill('#to', day);
+    await p.fill('#open', '10:00'); await p.fill('#close', '12:00'); await p.fill('#len', '30');
+    await p.click('#mk');
+    await p.waitForFunction(() => document.querySelector('#smsg').textContent.includes('4'));
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM slots').get().n, 4);
+    const b = await browser.newPage();
+    await b.goto(base + '/book.html');
+    await b.fill('#day', day); await b.dispatchEvent('#day', 'change');
+    await b.waitForSelector('#slots button');
+    assert.equal(await b.locator('#slots button').count(), 4);
+  } finally { await browser.close(); srv.close(); }
+});

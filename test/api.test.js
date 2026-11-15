@@ -82,6 +82,14 @@ test('admin can add a mall; others cannot; bad country rejected', async () => {
   assert.equal((await call('GET', '/api/malls')).json.length, 2);
   srv.close();
 });
+test('bulk slots route is admin-only and creates slots', async () => {
+  const { srv, call } = await boot();
+  const b = { mall: 1, fromDay: '2026-12-20', toDay: '2026-12-20', open: '10:00', close: '11:00', minutes: 30, capacity: 2 };
+  assert.equal((await call('POST', '/api/admin/slots/bulk', b, 'h1')).status, 401);
+  assert.equal((await call('POST', '/api/admin/slots/bulk', b, 'a1')).json.created, 2);
+  assert.equal((await call('POST', '/api/admin/slots/bulk', { ...b, minutes: 1 }, 'a1')).status, 400);
+  srv.close();
+});
 test('upload with no active family is a clear 409', async () => {
   const { srv, call } = await boot();
   const r = await call('POST', '/api/photos?mall=1&name=a.jpg', null, 'p1', 'x');
