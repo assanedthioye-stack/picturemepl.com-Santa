@@ -4,7 +4,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { chromium } = require('playwright');
+const sharp = require('sharp');
 const { openDb } = require('../server/db');
+const jpeg = () => sharp({ create: { width: 1600, height: 1200, channels: 3, background: '#808080' } }).jpeg().toBuffer();
 const { createServer } = require('../server/app');
 
 const PINS = { host: 'h111', photographer: 'p111', cashier: 'c111', monitor: 'm111', admin: 'a111' };
@@ -39,7 +41,7 @@ test('family books, host checks in, photo, monitor picks Famille, cashier takes 
     await host.click('#next');
     await host.waitForSelector('.q.serving');
 
-    const up = await fetch(base + '/api/photos?mall=1&name=a.jpg', { method: 'POST', headers: { 'x-pin': 'p111' }, body: 'JPEG' });
+    const up = await fetch(base + '/api/photos?mall=1&name=a.jpg', { method: 'POST', headers: { 'x-pin': 'p111' }, body: await jpeg() });
     assert.equal(up.status, 200);
 
     const mon = await open('/monitor.html?mall=1', 'm111');
@@ -55,7 +57,8 @@ test('family books, host checks in, photo, monitor picks Famille, cashier takes 
     await cash.click('#pay');
     await cash.waitForFunction(() => document.querySelector('#msg').textContent.includes('✓'));
 
-    const job = await (await fetch(base + '/api/print/next?mall=1', { headers: { 'x-pin': 'c111' } })).json();
+    assert.equal(await mon.locator('a[href^="/dl"], a[download]').count(), 0); // nothing to download on the customer screen
+    const job = await (await fetch(base + '/api/print/next?mall=1', { headers: { 'x-pin': 'a111' } })).json();
     assert.equal(job.code, code);
   } finally { await browser.close(); srv.close(); }
 });

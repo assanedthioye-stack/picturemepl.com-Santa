@@ -8,8 +8,9 @@ const dir = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 let pins;
 try { pins = JSON.parse(process.env.PINS || '{}'); } catch { pins = null; }
 const ROLES = ['host', 'photographer', 'cashier', 'monitor', 'admin'];
-if (!pins || !ROLES.every((r) => typeof pins[r] === 'string' && pins[r].length >= 4) || new Set(ROLES.map((r) => pins[r])).size !== ROLES.length) {
-  console.error('Set PINS to JSON with a different PIN (4+ characters) for each of: ' + ROLES.join(', '));
+const given = pins ? ROLES.concat(pins.printer === undefined ? [] : ['printer']) : []; // printer is optional: without it the print script uses the admin PIN
+if (!pins || !given.every((r) => typeof pins[r] === 'string' && pins[r].length >= 4) || new Set(given.map((r) => pins[r])).size !== given.length) {
+  console.error('Set PINS to JSON with a different PIN (4+ characters) for each of: ' + ROLES.join(', ') + ' (and optionally printer)');
   process.exit(1);
 }
 process.on('unhandledRejection', (e) => console.error('unhandledRejection:', e));

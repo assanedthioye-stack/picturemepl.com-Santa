@@ -61,12 +61,26 @@ function pay(db, code, /** @type {any} */ p, now = new Date()) {
   });
 }
 
-function getOrder(db, code, now = new Date()) {
+function getOrder(db, code) {
   const o = db.prepare('SELECT * FROM orders WHERE code=?').get(String(code || ''));
   const country = countryOf(db, code);
   if (!o || !country) throw new Error('unknown code');
   return { lines: JSON.parse(o.lines_json), total: o.total, photos: JSON.parse(o.files_json).length, paid: !!o.paid_at, method: o.method,
-    provider: o.provider, print_state: o.print_state, country, downloads: o.paid_at ? download(db, code, now) : null };
+    provider: o.provider, print_state: o.print_state, country };
+}
+
+// Photos of an order whose payment is confirmed: the only files the printer may fetch clean.
+function paidFiles(db, code) {
+  const o = db.prepare('SELECT files_json FROM orders WHERE code=? AND paid_at IS NOT NULL').get(String(code || ''));
+  return o ? JSON.parse(o.files_json) : [];
+}
+
+// For the admin: every photo of a family, which ones they chose, and whether they bought digital files.
+function adminFiles(db, code) {
+  const files = gallery(db, code);
+  if (!files) throw new Error('unknown code');
+  const o = db.prepare('SELECT files_json, paid_at FROM orders WHERE code=?').get(String(code || ''));
+  return { files, chosen: o ? JSON.parse(o.files_json) : [], paid: !!(o && o.paid_at), digital: download(db, code) !== null };
 }
 
 function nextPrintJob(db, mallId) {
@@ -84,6 +98,6 @@ function download(db, code, now = new Date()) {
   const o = db.prepare('SELECT * FROM orders WHERE code=? AND paid_at IS NOT NULL').get(String(code || ''));
   if (!o || now >= new Date(o.download_expires_at)) return null;
   const hasDigital = JSON.parse(o.items_json).some((i) => DIGITAL.includes(i.item));
-  return hasDigital ? JSON.parse(o.files_json) : null; // print-only orders get no files
+  return hasDigital ? JSON.parse(o.files_json) : null; // print-only orders bought no digital file
 }
-module.exports = { saveCart, pay, getOrder, nextPrintJob, markPrinted, download, PROVIDERS };
+module.exports = { saveCart, pay, getOrder, paidFiles, adminFiles, nextPrintJob, markPrinted, download, PROVIDERS };

@@ -4,7 +4,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
+const sharp = require('sharp');
 const { openDb } = require('../server/db');
+const jpeg = () => sharp({ create: { width: 1600, height: 1200, channels: 3, background: '#808080' } }).jpeg().toBuffer();
 const { createServer } = require('../server/app');
 const { listSlots, book, cancel } = require('../server/booking');
 const { checkIn, addWalkIn, serveNext } = require('../server/queue');
@@ -86,11 +88,11 @@ test('only images can be uploaded, and only recorded photos are served', async (
   serveNext(db, 1);
   assert.equal((await call('POST', '/api/photos?mall=1&name=evil.html', null, 'p111', '<script>1</script>')).json.error, 'bad file');
   assert.equal((await call('POST', '/api/photos?mall=1&name=a.jpg', null, 'p111', '')).json.error, 'bad file');
-  const up = await call('POST', '/api/photos?mall=1&name=a.jpg', null, 'p111', 'JPEG');
-  assert.equal((await call('GET', `/photo/${code}/${up.json.file}`, null, 'm111')).text, 'JPEG');
-  assert.equal((await call('GET', `/photo/${code}/nope.jpg`, null, 'm111')).status, 404);
-  assert.equal((await call('GET', `/photo/${code}/${up.json.file}`)).status, 401);
-  assert.equal((await call('POST', '/api/photos?mall=99&name=a.jpg', null, 'p111', 'JPEG')).json.error, 'unknown mall');
+  const up = await call('POST', '/api/photos?mall=1&name=a.jpg', null, 'p111', await jpeg());
+  assert.equal((await call('GET', `/preview/${code}/${up.json.file}`, null, 'm111')).status, 200);
+  assert.equal((await call('GET', `/preview/${code}/nope.jpg`, null, 'm111')).status, 404);
+  assert.equal((await call('GET', `/preview/${code}/${up.json.file}`)).status, 401);
+  assert.equal((await call('POST', '/api/photos?mall=99&name=a.jpg', null, 'p111', await jpeg())).json.error, 'unknown mall');
   srv.close();
 });
 test('past slots are hidden and cannot be booked; the grace period still counts', () => {

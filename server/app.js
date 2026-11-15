@@ -86,13 +86,14 @@ function createServer({ db, dir, pins, log = console.error }) {
       const mall = mallById(db, int(q('mall'))).id;
       const serving = queue.active(db, mall)?.code; // read BEFORE the slow body, so a shot can't land on the next family
       const bytes = await readBody(req, MAX_PHOTO);
-      return photos.ingest(db, dir, mall, q('name'), bytes, serving || 'none');
+      return await photos.ingest(db, dir, mall, q('name'), bytes, serving || 'none');
     }],
     'POST /api/cart': [['monitor', 'cashier'], async ({ req }) => { const b = await json(req); return orders.saveCart(db, b.code, b.items, b.files || []); }],
     'GET /api/order': [['monitor', 'cashier'], ({ q }) => orders.getOrder(db, q('code'))],
     'POST /api/pay': [['cashier'], async ({ req }) => { const b = await json(req); return orders.pay(db, b.code, b); }],
-    'GET /api/print/next': [['cashier'], ({ q }) => orders.nextPrintJob(db, mallById(db, int(q('mall'))).id)],
-    'POST /api/print/done': [['cashier'], async ({ req }) => { orders.markPrinted(db, (await json(req)).code); return {}; }],
+    'GET /api/print/next': [['printer'], ({ q }) => orders.nextPrintJob(db, mallById(db, int(q('mall'))).id)],
+    'POST /api/print/done': [['printer'], async ({ req }) => { orders.markPrinted(db, (await json(req)).code); return {}; }],
+    'GET /api/admin/files': [[], ({ q }) => orders.adminFiles(db, q('code'))],
     'PUT /api/admin/prices': [[], async ({ req }) => { const b = await json(req); admin.setPrice(db, b.country, b.item, b.amount); return {}; }],
     'POST /api/admin/malls': [[], async ({ req }) => { const b = await json(req); admin.addMall(db, b.name, b.country); return {}; }],
     'POST /api/admin/slots/bulk': [[], async ({ req }) => { const b = await json(req); return admin.addSlots(db, { ...b, mall: int(b.mall), minutes: int(b.minutes), capacity: int(b.capacity) }); }],
@@ -139,15 +140,21 @@ function createServer({ db, dir, pins, log = console.error }) {
           const data = type === 'daily' ? exp.dailyCsv(db, o) : exp.ordersCsv(db, o);
           return send(200, data, 'text/csv; charset=utf-8', { 'content-disposition': `attachment; filename="${type}_${o.country || 'all'}_${o.from}_${o.to}.csv"` });
         }
-        const ph = u.pathname.match(/^\/photo\/(\w{1,16})\/([\w.-]{1,200})$/), dl = u.pathname.match(/^\/dl\/(\w{1,16})\/([\w.-]{1,200})$/);
-        if (ph || dl) {
-          const [, code, file] = ph || dl;
-          if (ph) allowed(['monitor', 'cashier', 'host']);
-          // Only files recorded for this family are ever read from disk; downloads also need a paid, unexpired digital order.
-          const okFile = ph ? (photos.gallery(db, code) || []).includes(file) : (orders.download(db, code) || []).includes(file);
-          const f = path.join(dir, code, file);
-          if (!okFile || !photos.IMAGE.test(file) || !fs.existsSync(f)) throw new Error('not found');
-          return send(200, await fs.promises.readFile(f), MIME[path.extname(file).toLowerCase()], dl ? { 'content-disposition': `attachment; filename="${file}"` } : {});
+        // Pictures. Screens only ever get the watermarked preview. The clean original goes to the admin, and to the
+        // printer once payment is confirmed. There is no public download.
+        if ((m = u.pathname.match(/^\/preview\/(\w{1,16})\/([\w.-]{1,200})$/))) {
+          allowed(['monitor', 'cashier', 'host']);
+          return send(200, await photos.read(db, dir, m[1], m[2]), 'image/jpeg');
+        }
+        if ((m = u.pathname.match(/^\/photo\/(\w{1,16})\/([\w.-]{1,200})$/))) {
+          allowed([]);
+          return send(200, await photos.read(db, dir, m[1], m[2], { clean: true }), MIME[path.extname(m[2]).toLowerCase()], { 'content-disposition': `attachment; filename="${m[2]}"` });
+        }
+        if (u.pathname === '/api/print/file') {
+          allowed(['printer']);
+          const code = String(q('code') || ''), file = String(q('file') || '');
+          if (!orders.paidFiles(db, code).includes(file)) throw new Error('not found');
+          return send(200, await photos.read(db, dir, code, file, { clean: true }), MIME[path.extname(file).toLowerCase()]);
         }
         if (!u.pathname.startsWith('/api/')) {
           const f = path.resolve(PUBLIC, u.pathname === '/' ? 'book.html' : '.' + path.posix.normalize(u.pathname));

@@ -1,21 +1,16 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 const { openDb } = require('../server/db');
 const { addWalkIn, serveNext } = require('../server/queue');
-const { ingest } = require('../server/photos');
 const { saveCart, pay, nextPrintJob, markPrinted, download } = require('../server/orders');
 
 const DAY = 86400000;
 function setup(country = 'SN') {
   const db = openDb();
   db.prepare("INSERT INTO malls(id,name,country) VALUES(1,'M',?)").run(country);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-'));
   const code = addWalkIn(db, 1, { name: 'A', phone: '+221700000000', consent: true }).code;
   serveNext(db, 1);
-  ingest(db, dir, 1, 'a.jpg', Buffer.from('x'));
+  db.prepare("INSERT INTO photos(code,file) VALUES(?,'1_a.jpg')").run(code);
   const file = db.prepare('SELECT file FROM photos').get().file;
   saveCart(db, code, [{ item: 'famille', qty: 1 }], [file]);
   return { db, code };

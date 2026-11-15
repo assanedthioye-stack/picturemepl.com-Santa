@@ -3,7 +3,9 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const sharp = require('sharp');
 const { openDb } = require('../server/db');
+const jpeg = () => sharp({ create: { width: 1600, height: 1200, channels: 3, background: '#808080' } }).jpeg().toBuffer();
 const { createServer } = require('../server/app');
 const { dailySales } = require('../server/admin');
 
@@ -41,16 +43,16 @@ test('end to end: book, check in, serve, upload, cart, pay, print, download', as
   const code = b.json.code;
   assert.equal((await call('POST', '/api/checkin', { code, mall: 1 }, 'h111')).json.kind, 'appointment');
   assert.equal((await call('POST', '/api/next', { mall: 1 }, 'h111')).json.code, code);
-  assert.equal((await call('POST', '/api/photos?mall=1&name=a.jpg', null, 'p111', 'JPEGDATA')).json.code, code);
+  assert.equal((await call('POST', '/api/photos?mall=1&name=a.jpg', null, 'p111', await jpeg())).json.code, code);
   const g = await call('GET', '/api/gallery/' + code, null, 'm111');
   assert.equal(g.json.length, 1);
   const cart = await call('POST', '/api/cart', { code, items: [{ item: 'famille', qty: 1 }], files: g.json }, 'm111');
   assert.equal(cart.json.total, 10000);
-  assert.equal((await call('GET', '/api/print/next?mall=1', null, 'c111')).json, null);
+  assert.equal((await call('GET', '/api/print/next?mall=1', null, 'a111')).json, null);
   assert.equal((await call('POST', '/api/pay', { code, method: 'mobile_money', provider: 'Wave', reference: 'T1', expectedTotal: 10000, cashier: 'amy' }, 'c111')).json.total, 10000);
-  assert.equal((await call('GET', '/api/print/next?mall=1', null, 'c111')).json.code, code);
-  assert.equal((await call('GET', `/dl/${code}/${g.json[0]}`)).text, 'JPEGDATA');
-  assert.equal((await call('GET', `/dl/NOPE1234/x.jpg`)).status, 404);
+  assert.equal((await call('GET', '/api/print/next?mall=1', null, 'a111')).json.code, code);
+  assert.equal((await call('GET', `/api/print/file?code=${code}&file=${g.json[0]}`, null, 'a111')).status, 200);
+  assert.equal((await call('GET', `/dl/${code}/${g.json[0]}`)).status, 404);
   assert.equal((await call('GET', `/photo/${code}/${g.json[0]}`)).status, 401);
   const day = new Date().toISOString().slice(0, 10);
   assert.deepEqual(dailySales(db, 1, day), { total: 10000, byMethod: { mobile_money: 10000 }, byProvider: { Wave: 10000 } });
@@ -92,7 +94,7 @@ test('bulk slots route is admin-only and creates slots', async () => {
 });
 test('upload with no active family is a clear 409', async () => {
   const { srv, call } = await boot();
-  const r = await call('POST', '/api/photos?mall=1&name=a.jpg', null, 'p111', 'x');
+  const r = await call('POST', '/api/photos?mall=1&name=a.jpg', null, 'p111', await jpeg());
   assert.equal(r.status, 409);
   srv.close();
 });

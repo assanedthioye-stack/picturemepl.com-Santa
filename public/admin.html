@@ -9,6 +9,7 @@
   <button id="mk" data-t="create_slots"></button><p id="smsg"></p></div>
 <div class="card"><h2 data-t="sales"></h2><input id="sd" type="date"><div id="sales"></div></div>
 <details class="card" id="priceBox"><summary><b data-t="prices_auto"></b></summary><div id="prices"></div><p id="pmsg"></p></details>
+<div class="card"><h2 data-t="files_title"></h2><input id="fcode" data-tp="code" autocapitalize="characters" maxlength="8"><button id="fload" data-t="files_load"></button><p id="fmsg"></p><div id="flist"></div></div>
 <div class="card"><h2 data-t="add_mall"></h2><input id="mname" data-tp="name"><select id="mcountry"><option value="SN">Sénégal</option><option value="CI">Côte d'Ivoire</option><option value="BJ">Bénin</option></select><button id="addmall" data-t="save"></button><p id="mmsg"></p></div>
 </main><style>.filters2{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:8px 0}.filters2>*{min-width:0}</style>
 <script src="/app.js"></script><script>
@@ -40,5 +41,21 @@ $('#prices').addEventListener('change', async (e) => {
 });
 async function sales() { if (!mallId()) return; try { const s = await api('GET', `/api/admin/sales?mall=${mallId()}&day=${$('#sd').value}`);
   $('#sales').innerHTML = `<div class="tot">${xof(s.total)}</div>` + Object.entries({ ...s.byMethod, ...s.byProvider }).map(([k, v]) => `<div class="item"><span>${esc(t(k))}</span><span>${xof(v)}</span></div>`).join(''); } catch (e) { $('#sales').textContent = errText(e.message); } }
+$('#fload').onclick = async () => {
+  const code = $('#fcode').value.trim().toUpperCase();
+  $('#flist').innerHTML = '';
+  try { const r = await api('GET', '/api/admin/files?code=' + encodeURIComponent(code));
+    $('#fmsg').textContent = !r.paid ? t('not_paid') : r.digital ? t('digital_yes') : t('digital_no'); $('#fmsg').className = r.paid ? 'good' : 'err';
+    $('#flist').innerHTML = r.files.map((f) => `<div class="item"><span>${esc(f)}${r.chosen.includes(f) ? ' <b class="good">' + esc(t('chosen')) + '</b>' : ''}</span><button class="alt" data-file="${esc(f)}">${esc(t('download'))}</button></div>`).join('');
+    $('#flist').dataset.code = code;
+  } catch (e) { $('#fmsg').textContent = errText(e.message); $('#fmsg').className = 'err'; }
+};
+$('#flist').onclick = async (e) => { // the original is fetched with the admin PIN header and saved as a file
+  const f = e.target.dataset.file; if (!f) return;
+  try { const r = await fetch(`/photo/${encodeURIComponent($('#flist').dataset.code)}/${encodeURIComponent(f)}`, { headers: { 'x-pin': getPin() } });
+    if (!r.ok) throw new Error(r.status === 401 ? 'pin' : 'not found');
+    const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = f; a.click(); URL.revokeObjectURL(a.href);
+  } catch (err) { $('#fmsg').textContent = errText(err.message); $('#fmsg').className = 'err'; }
+};
 $('#sd').onchange = sales; $('#mallsel').onchange = () => { sales(); showPrices(); }; window.render = sales; applyI18n(); malls().catch((e) => { $('#smsg').textContent = errText(e.message); }); setInterval(sales, 10000);
 </script></body></html>

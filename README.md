@@ -13,7 +13,14 @@ Env: `PINS` (required, one PIN per role), `PORT` (default 3000), `DATA_DIR` (def
 `/` (public booking), `/host.html`, `/photographer.html`, `/monitor.html`, `/cashier.html`, `/admin.html`, `/dashboard.html`.
 Staff pages ask for their role's PIN (the admin PIN works everywhere). With several malls, each device asks which mall once and remembers it. The cashier types their name once; it is recorded on every payment.
 
+## Photo protection
+- Every screen (customer monitor, cashier, host) receives only a small watermarked preview (1000 px, `PICTURE ME PLEASE` across the image).
+- The clean original is released only to the admin, and to the printer PIN once payment is confirmed, and only for the photos the family chose.
+- There is no public download link. Digital files are handed over by an admin from the admin page ("Photos d'une famille").
+- A screenshot of the watermarked preview cannot be prevented by any website.
+
 ## Security notes
+- Optional `printer` PIN in `PINS` for the print script; without it, use the admin PIN.
 - `PINS` must hold a different PIN of 4+ characters for each role; the server refuses to start otherwise.
 - PINs travel in a request header only, never in a URL. 20 wrong PINs from one address lock that address out for 10 minutes.
 - Run behind HTTPS (Hostinger provides it).
@@ -23,7 +30,7 @@ On the admin page (`/admin.html`): add the mall, then create its time slots with
 
 ## At the mall
 - Photographer laptop: `node tools/uploader.js <cameraFolder> <serverUrl> <photographerPin> <mallId>`
-- Print PC: `node tools/print-agent.js <serverUrl> <cashierPin> <mallId> <printerHotFolder> <DATA_DIR>/photos`
+- Print PC: `node tools/print-agent.js <serverUrl> <printerPin> <mallId> <printerHotFolder>` (downloads the clean photos of paid orders only)
 
 ## Before launch
 Final consent wording for children's photos (placeholder in use), real printer integration (hot-folder assumed), HTTPS in front of the server.
