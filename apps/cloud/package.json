@@ -1,0 +1,28 @@
+{
+  "name": "@pmp/cloud",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/dev.ts",
+    "seed": "tsx src/seed.ts",
+    "build:edge": "node build.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@pmp/shared": "workspace:*",
+    "hash-wasm": "^4.13.0",
+    "hono": "^4.13.18",
+    "postgres": "^3.4.9",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@hono/node-server": "^2.1.8",
+    "@types/node": "^22.19.0",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.0"
+  }
+}

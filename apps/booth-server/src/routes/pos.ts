@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getSetting, schema, setSetting, writeSynced, type Db } from '@pmp/db';
-import { COUNTRIES, MOMO_METHODS, PRINT_SIZES } from '@pmp/shared';
+import { COUNTRIES, MOMO_METHODS, packageId, PRINT_SIZES } from '@pmp/shared';
 import type { Deps } from '../app';
 import { audit } from '../audit';
 import { requirePerm, staffOf } from '../auth/auth';
@@ -36,7 +36,7 @@ export function seedPackages(db: Db): void {
       for (const country of Object.keys(COUNTRIES) as Array<keyof typeof COUNTRIES>) {
         const existing = tx.select({ id: schema.packages.id }).from(schema.packages)
           .where(and(eq(schema.packages.code, p.code), eq(schema.packages.country, country))).get();
-        writeSynced(tx, schema.packages, { id: existing?.id ?? uuidv7(), ...p, prints: { ...p.prints }, country, priceXof: price[country], active: true });
+        writeSynced(tx, schema.packages, { id: existing?.id ?? packageId(p.code, country), ...p, prints: { ...p.prints }, country, priceXof: price[country], active: true });
       }
     }
     setSetting(tx as unknown as Db, 'packages.version', PRICE_LIST_VERSION);

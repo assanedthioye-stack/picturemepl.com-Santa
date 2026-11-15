@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getSetting, schema, writeSynced, type Db } from '@pmp/db';
-import { COUNTRIES, extractBookingCode, normalizePhone, type Country } from '@pmp/shared';
+import { COUNTRIES, extractBookingCode, normalizePhone, WALK_IN_CODE_PREFIX, type Country } from '@pmp/shared';
 import type { Deps } from '../app';
 import { audit } from '../audit';
 import { hashSecret, requirePerm, staffOf, type StaffUser } from '../auth/auth';
@@ -12,11 +12,10 @@ import { digitCode, humanCode, uuidv7 } from '../ids';
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 const Q = schema.queueEntries;
 
-/** 6-digit code, unique on this booth. */
+/** 6-digit walk-in code: starts with 9 (online codes never do) and is unique on this booth (codes are per booth in the cloud too). */
 export function newBookingCode(db: Db | Tx): string {
-  // shortcut: uniqueness is checked locally; two offline booths can mint the same code — Phase 3 sync must re-key on conflict
   for (;;) {
-    const code = digitCode(6);
+    const code = WALK_IN_CODE_PREFIX + digitCode(5);
     if (!db.select({ id: schema.bookings.id }).from(schema.bookings).where(eq(schema.bookings.code, code)).get()) return code;
   }
 }

@@ -33,7 +33,7 @@ describe('booth day: host → photographer → cashier', () => {
     expect((await bad.json()).error).toBe('invalid_phone');
 
     const w1 = await (await host.post('/api/queue/walk-in', { fullName: 'Famille Diop', phone: '77 123 45 67', country: 'SN', partySize: 4 })).json();
-    expect(w1.bookingCode).toMatch(/^\d{6}$/);
+    expect(w1.bookingCode).toMatch(/^9\d{5}$/); // walk-in range
     expect(w1.pin).toMatch(/^\d{6}$/);
     await host.post('/api/queue/walk-in', { fullName: 'Famille Houngbo', phone: '01 97 12 34 56', country: 'BJ' });
 

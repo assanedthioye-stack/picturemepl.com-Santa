@@ -52,6 +52,7 @@ describe('phones and codes', () => {
   it('extracts the booking code from scans', () => {
     expect(extractBookingCode('482913')).toBe('482913');
     expect(extractBookingCode('https://picturemeplease.app/b/xyz?code=482913')).toBe('482913');
+    expect(extractBookingCode('https://x/b/cfd047277e01?code=482913')).toBe('482913'); // token digits ignored
     expect(extractBookingCode('1234567')).toBeNull();
     expect(extractBookingCode('12345')).toBeNull();
   });

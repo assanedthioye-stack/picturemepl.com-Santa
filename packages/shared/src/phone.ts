@@ -1,8 +1,8 @@
 /** Booth countries. Benin moved to 10-digit numbers ("01…") in Nov 2024; Côte d'Ivoire in 2021. */
 export const COUNTRIES = {
-  SN: { prefix: '221', digits: 9, nameFr: 'Sénégal', nameEn: 'Senegal', momo: ['orange_money', 'wave'] },
-  BJ: { prefix: '229', digits: 10, nameFr: 'Bénin', nameEn: 'Benin', momo: ['mtn_momo', 'celtiis_cash'] },
-  CI: { prefix: '225', digits: 10, nameFr: "Côte d'Ivoire", nameEn: "Côte d'Ivoire", momo: ['orange_money', 'wave'] },
+  SN: { prefix: '221', digits: 9, nameFr: 'Sénégal', nameEn: 'Senegal', momo: ['orange_money', 'wave'], utcOffsetMin: 0 },
+  BJ: { prefix: '229', digits: 10, nameFr: 'Bénin', nameEn: 'Benin', momo: ['mtn_momo', 'celtiis_cash'], utcOffsetMin: 60 },
+  CI: { prefix: '225', digits: 10, nameFr: "Côte d'Ivoire", nameEn: "Côte d'Ivoire", momo: ['orange_money', 'wave'], utcOffsetMin: 0 },
 } as const;
 export type Country = keyof typeof COUNTRIES;
 /** Mobile Money accepted per country (price list, Oct 2026). */
@@ -21,5 +21,9 @@ export function normalizePhone(country: Country, input: string): string | null {
 
 /** Pulls the 6-digit booking code out of whatever a QR or keyboard-wedge scanner produced. */
 export function extractBookingCode(text: string): string | null {
-  return /(?<!\d)(\d{6})(?!\d)/.exec(text)?.[1] ?? null;
+  // Ticket QRs are links whose random token can hold 6 digits in a row: an explicit code= wins.
+  return /[?&]code=(\d{6})(?!\d)/.exec(text)?.[1] ?? /(?<!\d)(\d{6})(?!\d)/.exec(text)?.[1] ?? null;
 }
+
+/** Walk-in codes (made at the booth) start with 9; online codes never do, so they cannot collide. */
+export const WALK_IN_CODE_PREFIX = '9';
