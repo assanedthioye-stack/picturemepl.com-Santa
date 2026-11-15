@@ -16,6 +16,7 @@ import { posRoutes } from './routes/pos';
 import type { MirrorService } from './storage/mirror';
 import { lanGuard, pairingRoutes } from './lan/devices';
 import type { TlsMaterial } from './lan/tls';
+import type { CloudClient } from './cloud/client';
 
 export interface Deps {
   db: Db;
@@ -28,6 +29,8 @@ export interface Deps {
   mirror: MirrorService;
   /** null when LAN access is off. */
   tls: TlsMaterial | null;
+  /** null when the booth runs without the cloud (Mobile Money then falls back to manual entry). */
+  cloud: CloudClient | null;
 }
 
 export function createApp(deps: Deps): express.Express {

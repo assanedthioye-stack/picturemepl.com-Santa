@@ -121,7 +121,9 @@ describe('booth day: host → photographer → cashier', () => {
       ['Canon PIXMA TS8320', 1], ['DNP DS620A', 1], ['DNP DS620A', 1], ['DNP DS620A', 2], ['DNP DS620A', 2],
     ]);
     const uploads = t.booth.db.select().from(schema.uploadJobs).all();
-    expect(uploads.map((u) => [u.photoId, u.kind, u.priority, u.status])).toEqual([[a, 'deliverable', 10, 'queued']]);
+    expect(uploads).toHaveLength(3 * 3); // shoot complete: thumb + preview + original for every photo
+    // The purchased original jumps the queue.
+    expect(uploads.filter((u) => u.priority === 10).map((u) => [u.photoId, u.kind, u.status])).toEqual([[a, 'deliverable', 'queued']]);
     expect((await (await cashier.get('/api/pos/families')).json())).toHaveLength(0);
     // Paid: gone from the shoot list, and cannot be re-armed.
     const sessions = await (await ph.get('/api/sessions')).json();

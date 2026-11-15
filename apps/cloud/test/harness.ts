@@ -27,7 +27,8 @@ export function scriptedProvider(id: ProviderId) {
 }
 
 /** Fresh database per test file, migrated, with one SN booth and one BJ booth. */
-export async function makeCloud() {
+export async function makeCloud(o: { base?: string } = {}) {
+  const base = o.base ?? BASE;
   const name = `pmp_test_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   const admin = postgres(ADMIN_URL, { max: 1 });
   await admin.unsafe(`create database ${name}`);
@@ -40,14 +41,14 @@ export async function makeCloud() {
   const mtn = scriptedProvider('mtn');
   const payments: PaymentsConfig = {
     providers: { cinetpay: cinet.p, mtn: mtn.p }, route: { SN: 'cinetpay', CI: 'cinetpay', BJ: 'mtn' },
-    apiUrl: BASE, merchant: { mtn_momo: '2290159089346' },
+    apiUrl: base, merchant: { mtn_momo: '2290159089346' },
   };
   const files = new Map<string, { body: Uint8Array; type: string }>();
-  const storage = devStorage({ baseUrl: BASE, secret: 's', files });
+  const storage = devStorage({ baseUrl: base, secret: 's', files });
   const app = createCloudApp({ db, storage, payments, webUrl: WEB, secret: 'gallery-secret' });
 
   const call = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) => {
-    const res = await app.fetch(new Request(BASE + path, {
+    const res = await app.fetch(new Request(base + path, {
       method, headers: { ...(body !== undefined && !(body instanceof Uint8Array) ? { 'content-type': 'application/json' } : {}), ...headers },
       body: body === undefined ? undefined : body instanceof Uint8Array ? (body as unknown as BodyInit) : JSON.stringify(body),
     }));

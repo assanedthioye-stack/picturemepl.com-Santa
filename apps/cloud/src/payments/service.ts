@@ -40,7 +40,7 @@ export interface StartInput {
 }
 
 /** Creates the pending payment for the order's total and asks the provider to collect it. */
-export async function startPayment(db: Db, cfg: PaymentsConfig, i: StartInput): Promise<InitResult & { paymentId: string }> {
+export async function startPayment(db: Db, cfg: PaymentsConfig, i: StartInput): Promise<InitResult & { paymentId: string; provider: ProviderId }> {
   const provider = providerFor(cfg, i.country, i.method);
   const [order] = await db.query<{ total_xof: number; status: string }>('select total_xof, status from orders where id = $1', [i.orderId]);
   if (!order) throw new PayError(404, 'order_not_found');
@@ -60,7 +60,7 @@ export async function startPayment(db: Db, cfg: PaymentsConfig, i: StartInput): 
       notifyUrl: `${cfg.apiUrl}/api/webhooks/${provider.id}`,
     });
     await db.query('update payments set provider_ref = $2, updated_at = $3 where id = $1', [id, r.providerRef, Date.now()]);
-    return { ...r, paymentId: id };
+    return { ...r, paymentId: id, provider: provider.id };
   } catch (e) {
     await db.query(`update payments set status = 'failed', provider_data = $2, updated_at = $3 where id = $1`,
       [id, JSON.stringify({ error: String((e as Error).message ?? e) }), Date.now()]);

@@ -342,7 +342,7 @@ export function createCloudApp(d: CloudDeps): Hono {
       orderId: String(b.order.id), paymentId: b.paymentId, method: b.method as Method, country: booth.country, phone,
       description: 'Picture Me Please', returnUrl: `${d.webUrl}/merci`, receivedBy: b.receivedBy ?? null,
     });
-    return c.json(r.kind === 'redirect' ? { kind: 'redirect', url: r.url } : { kind: 'push' });
+    return c.json({ ...(r.kind === 'redirect' ? { kind: 'redirect', url: r.url } : { kind: 'push' }), provider: r.provider });
   });
   const boothPayment = async (boothId: string, id: string) => {
     const [p] = await db.query('select p.id from payments p join orders o on o.id = p.order_id where p.id = $1 and o.booth_id = $2', [id, boothId]);

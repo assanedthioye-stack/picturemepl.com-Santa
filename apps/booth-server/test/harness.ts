@@ -13,7 +13,7 @@ export const KIOSK_TOKEN = 'k'.repeat(48);
 
 export interface Printed { pdf: Buffer; o: PrintOptions }
 
-export async function makeBooth(env: (root: string) => Record<string, string> = () => ({}), opts: { lanIps?: string[] } = {}) {
+export async function makeBooth(env: (root: string) => Record<string, string> = () => ({}), opts: { lanIps?: string[]; manualSync?: boolean } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'pmp-'));
   const printed: Printed[] = [];
   const spooler: Spooler = {

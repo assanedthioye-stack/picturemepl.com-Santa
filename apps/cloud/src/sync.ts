@@ -1,11 +1,9 @@
 import type { Q } from './db';
+import { STATUS_RANK } from '@pmp/shared';
 import { snake } from './util';
 
 /** Status ranks: a sync can only move a row forward (a replayed or late push never undoes a payment). */
-const RANK: Record<string, string[]> = {
-  bookings: ['pending_payment', 'confirmed', 'checked_in', 'in_session', 'shot_complete', 'completed', 'no_show', 'expired', 'cancelled'],
-  orders: ['open', 'void', 'paid', 'part_refunded', 'refunded'],
-};
+const RANK: Record<string, readonly string[]> = { bookings: STATUS_RANK.bookings, orders: STATUS_RANK.orders };
 
 interface TableRule {
   /** Columns the booth may change on an existing row (all insertable ones when omitted). */

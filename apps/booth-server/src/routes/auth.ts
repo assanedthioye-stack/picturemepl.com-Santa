@@ -22,7 +22,7 @@ export function authRoutes({ db, boothId, config }: Deps): Router {
     const result = await login(db, boothId, body.data.userId, body.data.secret);
     if (!result.ok) return res.status(result.reason === 'locked' ? 423 : 401).json({ error: result.reason });
     res.setHeader('Set-Cookie', cookie(STAFF_COOKIE, result.token, SESSION_SEC, { secure: req.secure }));
-    res.json({ ...result.user, boothCountry: config.country });
+    res.json({ ...result.user, boothCountry: config.country, cloud: !!config.cloud });
   });
 
   r.post('/api/auth/logout', (req, res) => {
@@ -35,7 +35,7 @@ export function authRoutes({ db, boothId, config }: Deps): Router {
   r.get('/api/auth/me', (req, res) => {
     const p = req.principal;
     if (!p) return res.status(401).json({ error: 'unauthenticated' });
-    res.json(p.kind === 'staff' ? { ...p.user, boothCountry: config.country } : { role: 'kiosk' });
+    res.json(p.kind === 'staff' ? { ...p.user, boothCountry: config.country, cloud: !!config.cloud } : { role: 'kiosk' });
   });
 
   // Electron main opens the kiosk window here once with the per-boot token.

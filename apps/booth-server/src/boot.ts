@@ -12,6 +12,8 @@ import { recoverIngest, type IngestCtx } from './photos/ingest';
 import { PrintQueue, windowsSpooler, type Spooler } from './print/router';
 import { MirrorService } from './storage/mirror';
 import { seedPackages } from './routes/pos';
+import { cloudClient } from './cloud/client';
+import { CloudSync } from './cloud/sync';
 import { ensureTls, type TlsMaterial } from './lan/tls';
 
 export function openBoothDb(config: Config): Db {
@@ -22,10 +24,23 @@ export function openBoothDb(config: Config): Db {
   return openDb(path.join(config.dataDir, 'booth.sqlite'), config.migrationsDir);
 }
 
-/** Booth id stays local until cloud pairing (Phase 2) replaces it with the real booths.id. */
-export function boothIdOf(db: Db): string {
-  let id = getSetting(db, 'booth_id');
-  if (!id) setSetting(db, 'booth_id', (id = uuidv7()));
+/**
+ * Local id until the booth is linked to the cloud; then the cloud's booths.id.
+ * Switching is only allowed before the first booking (ids are written into every row).
+ */
+export function boothIdOf(db: Db, cloudId?: string): string {
+  const stored = getSetting(db, 'booth_id');
+  if (cloudId && stored !== cloudId) {
+    if (stored && db.select({ id: schema.bookings.id }).from(schema.bookings).where(eq(schema.bookings.boothId, stored)).limit(1).get()) {
+      throw new Error(`This booth already has bookings under id ${stored}; PMP_BOOTH_ID ${cloudId} needs a fresh database.`);
+    }
+    if (stored) db.update(schema.cameras).set({ boothId: cloudId }).where(eq(schema.cameras.boothId, stored)).run();
+    setSetting(db, 'booth_id', cloudId);
+    return cloudId;
+  }
+  if (stored) return stored;
+  const id = uuidv7();
+  setSetting(db, 'booth_id', id);
   return id;
 }
 
@@ -38,12 +53,13 @@ export interface Booth {
   mirror: MirrorService;
   /** Resolves once the LAN certificate exists (never, when LAN is off). */
   lanReady: Promise<TlsMaterial>;
+  sync: CloudSync | null;
   stop(): Promise<void>;
 }
 
-export async function startBooth(config: Config, opts: { spooler?: Spooler; lanIps?: string[] } = {}): Promise<Booth> {
+export async function startBooth(config: Config, opts: { spooler?: Spooler; lanIps?: string[]; manualSync?: boolean } = {}): Promise<Booth> {
   const db = openBoothDb(config);
-  const boothId = boothIdOf(db);
+  const boothId = boothIdOf(db, config.cloud?.boothId);
   const hub = new EventHub();
 
   // Phase 1 runs one camera; more rows = more cameras (each needs its own driver instance).
@@ -94,10 +110,14 @@ export async function startBooth(config: Config, opts: { spooler?: Spooler; lanI
     };
     void attempt();
   });
-  const app = createApp({ db, config, hub, boothId, cameras, printQueue, spooler, mirror, get tls() { return tls; } });
+  const cloud = config.cloud ? cloudClient(config.cloud) : null;
+  const sync = cloud ? new CloudSync({ db, client: cloud, sessionsDir: config.sessionsDir, onPulled: () => hub.send('sync.pulled', {}) }) : null;
+  const app = createApp({ db, config, hub, boothId, cameras, printQueue, spooler, mirror, get tls() { return tls; }, cloud });
+  if (!opts.manualSync) sync?.start();
   return {
-    app, db, hub, cameras, printQueue, mirror, lanReady,
+    app, db, hub, cameras, printQueue, mirror, lanReady, sync,
     async stop() {
+      sync?.stop();
       await Promise.all([...cameras.values()].map((c) => c.stop()));
       await mirror.stop();
       db.$client.close();

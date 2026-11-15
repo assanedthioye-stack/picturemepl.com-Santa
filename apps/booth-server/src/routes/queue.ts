@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { Router } from 'express';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -60,7 +61,7 @@ const WalkIn = z.object({
   partySize: z.number().int().min(1).max(20).default(1),
 });
 
-export function queueRoutes({ db, hub, boothId }: Deps): Router {
+export function queueRoutes({ db, hub, boothId, config }: Deps): Router {
   const r = Router();
   const changed = () => hub.send('queue.updated', queueList(db));
 
@@ -100,7 +101,7 @@ export function queueRoutes({ db, hub, boothId }: Deps): Router {
     const booking = db.transaction((tx) => {
       const customer = writeSynced(tx, schema.customers, { id: uuidv7(), phone, country: body.country, fullName: body.fullName });
       const b = writeSynced(tx, schema.bookings, {
-        id: uuidv7(), code: newBookingCode(tx), publicToken: uuidv7(), pinHash,
+        id: uuidv7(), code: newBookingCode(tx), publicToken: randomBytes(16).toString('base64url'), pinHash, // gallery link: must be unguessable
         eventId: getSetting(db, 'event_id') ?? 'local', boothId, customerId: customer.id,
         source: 'walk_in', status: 'checked_in', partySize: body.partySize, checkedInAt: now, checkedInBy: user.id,
       });
@@ -109,7 +110,7 @@ export function queueRoutes({ db, hub, boothId }: Deps): Router {
     });
     audit(db, boothId, { action: 'queue.walk_in', actorId: user.id, actorRole: user.role, entity: 'booking', entityId: booking.id });
     changed();
-    res.status(201).json({ bookingCode: booking.code, pin });
+    res.status(201).json({ bookingCode: booking.code, pin, galleryUrl: config.webUrl ? `${config.webUrl}/b/${booking.publicToken}` : null });
   });
 
   // "Send to Photographer": the family's name + code pop up on the Photographer screen.

@@ -25,6 +25,10 @@ export interface Config {
   lan: boolean;
   /** Per-boot secret handed by Electron main to the kiosk window only. */
   kioskToken: string;
+  /** Cloud sync (all three together, from the cloud seed output); null = booth works offline only. */
+  cloud: { url: string; token: string; boothId: string } | null;
+  /** Public web app origin for gallery links, e.g. https://picturemepls.com. */
+  webUrl: string | null;
   /** Sets prices, Mobile Money methods and the walk-in phone default. */
   country: Country;
   /** Force a camera driver ('edsdk' | 'wia' | 'mock'); otherwise the camera row decides. */
@@ -58,10 +62,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     kioskToken: env.PMP_KIOSK_TOKEN,
     cameraDriver: env.PMP_CAMERA_DRIVER ?? null,
     country: country as Country,
+    cloud: env.PMP_CLOUD_URL
+      ? { url: env.PMP_CLOUD_URL.replace(/\/$/, ''), token: need(env, 'PMP_CLOUD_TOKEN'), boothId: need(env, 'PMP_BOOTH_ID') }
+      : null,
+    webUrl: env.PMP_WEB_URL?.replace(/\/$/, '') ?? null,
   };
 }
 
 function isSameOrInside(child: string, parent: string): boolean {
   const rel = path.relative(path.resolve(parent), path.resolve(child));
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+function need(env: NodeJS.ProcessEnv, k: string): string {
+  const v = env[k];
+  if (!v) throw new Error(`${k} is required when PMP_CLOUD_URL is set`);
+  return v;
 }

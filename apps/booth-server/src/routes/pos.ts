@@ -11,6 +11,8 @@ import { uuidv7 } from '../ids';
 import { toDto } from '../photos/ingest';
 import { PRICE_LIST, PRICE_LIST_VERSION, priceCart, type Pkg } from '../pos/pricing';
 import { kioskState, setKioskSession } from './kiosk';
+import { enqueueUpload } from '../cloud/sync';
+import { CloudError } from '../cloud/client';
 
 
 const NewOrder = z.object({
@@ -21,8 +23,11 @@ const NewOrder = z.object({
 });
 const Pay = z.discriminatedUnion('method', [
   z.object({ method: z.literal('cash'), tenderedXof: z.number().int().min(0).max(100_000_000) }),
+  z.object({ method: z.literal('prepaid') }), // already paid online: nothing left to collect
   z.object({ method: z.enum(MOMO_METHODS), reference: z.string().trim().min(4).max(64), payerPhone: z.string().max(25).optional() }),
 ]);
+const CloudPay = z.object({ method: z.enum(MOMO_METHODS), phone: z.string().max(25).optional() });
+const Verify = z.object({ operatorRef: z.string().trim().max(64).optional() });
 const OpenDrawer = z.object({ openingFloatXof: z.number().int().min(0).max(100_000_000) });
 const CloseDrawer = z.object({ countedXof: z.number().int().min(0).max(100_000_000) });
 
@@ -50,7 +55,39 @@ function openDrawer(db: Db, boothId: string) {
     .where(and(eq(schema.drawerSessions.boothId, boothId), eq(schema.drawerSessions.status, 'open'))).get();
 }
 
-export function posRoutes({ db, hub, boothId, printQueue, config }: Deps): Router {
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
+
+/** Paid online (booking package) and not yet used against a booth order. */
+export function prepaidCredit(db: Db | Tx, bookingId: string): { creditXof: number; packageId: string | null } {
+  const orders = db.select().from(schema.orders).where(and(eq(schema.orders.bookingId, bookingId), eq(schema.orders.status, 'paid'))).all();
+  let credit = 0;
+  let packageId: string | null = null;
+  for (const o of orders) {
+    if (o.channel === 'online') {
+      const bundle = db.select().from(schema.orderItems).where(and(eq(schema.orderItems.orderId, o.id), eq(schema.orderItems.kind, 'bundle'))).get();
+      if (bundle) { credit += o.totalXof; packageId = bundle.packageId; } // gallery purchases are not credit
+    } else {
+      credit -= o.creditAppliedXof;
+    }
+  }
+  return { creditXof: Math.max(0, credit), packageId };
+}
+
+/** Order paid, whatever the method: booking completed, prints queued, purchased originals queued for upload. */
+function fulfil(tx: Tx, order: typeof schema.orders.$inferSelect, userId: string, boothId: string, now: number): void {
+  writeSynced(tx, schema.orders, { id: order.id, status: 'paid', paidAt: now });
+  writeSynced(tx, schema.bookings, { id: order.bookingId, status: 'completed' });
+  const items = tx.select().from(schema.orderItems).where(eq(schema.orderItems.orderId, order.id)).all();
+  for (const it of items.filter((i) => i.kind === 'print')) {
+    writeSynced(tx, schema.printJobs, {
+      id: uuidv7(), boothId, orderItemId: it.id, photoId: it.photoId!, printSize: it.printSize!,
+      copies: it.qty, status: 'queued', requestedBy: userId,
+    });
+  }
+  for (const it of items.filter((i) => i.kind === 'digital')) enqueueUpload(tx as unknown as Db, it.photoId!, 'deliverable', 10);
+}
+
+export function posRoutes({ db, hub, boothId, printQueue, config, cloud }: Deps): Router {
   const r = Router();
   const forBooth = and(eq(schema.packages.active, true), eq(schema.packages.country, config.country));
   const P = schema.photos;
@@ -69,7 +106,8 @@ export function posRoutes({ db, hub, boothId, printQueue, config }: Deps): Route
       partySize: schema.bookings.partySize, photoCount, favCount, sessionId: lastSession, updatedAt: schema.bookings.updatedAt,
     }).from(schema.bookings).innerJoin(schema.customers, eq(schema.customers.id, schema.bookings.customerId))
       .where(and(eq(schema.bookings.boothId, boothId), eq(schema.bookings.status, 'shot_complete')))
-      .orderBy(schema.bookings.updatedAt).all());
+      .orderBy(schema.bookings.updatedAt).all()
+      .map((f) => { const p = prepaidCredit(db, f.bookingId); return { ...f, prepaidXof: p.creditXof, prepaidPackageId: p.packageId }; }));
   });
 
   r.get('/api/pos/families/:bookingId/photos', requirePerm('payment.take'), (req, res) => {
@@ -108,9 +146,13 @@ export function posRoutes({ db, hub, boothId, printQueue, config }: Deps): Route
         .where(and(eq(schema.orders.bookingId, booking.id), eq(schema.orders.status, 'open'))).all()) {
         writeSynced(tx, schema.orders, { id: o.id, status: 'void' });
       }
+      // A family who prepaid online only pays the difference (VAT on what is collected here).
+      const credit = Math.min(prepaidCredit(tx, booking.id).creditXof, priced.subtotalXof);
+      const total = priced.subtotalXof - credit;
       const o = writeSynced(tx, schema.orders, {
         id: uuidv7(), bookingId: booking.id, boothId, channel: 'booth', cashierId: user.id, status: 'open',
-        subtotalXof: priced.subtotalXof, totalXof: priced.totalXof, vatBp: rate, vatXof: priced.vatXof,
+        subtotalXof: priced.subtotalXof, creditAppliedXof: credit, totalXof: total, vatBp: rate,
+        vatXof: Math.round((total * rate) / (10_000 + rate)),
       });
       const item = (v: Omit<typeof schema.orderItems.$inferInsert, 'id' | 'orderId'>) =>
         writeSynced(tx, schema.orderItems, { id: uuidv7(), orderId: o.id, ...v });
@@ -140,6 +182,11 @@ export function posRoutes({ db, hub, boothId, printQueue, config }: Deps): Route
       const order = tx.select().from(schema.orders).where(eq(schema.orders.id, String(req.params.id))).get();
       if (!order || order.boothId !== boothId) throw new HttpError(404, 'order_not_found');
       if (order.status !== 'open') throw new HttpError(409, `order_${order.status}`); // also stops double taps
+      if (body.method === 'prepaid') {
+        if (order.totalXof !== 0) throw new HttpError(409, 'not_fully_prepaid');
+        fulfil(tx, order, user.id, boothId, now);
+        return { order, payment: null, change: 0 };
+      }
       let drawerId: string | null = null;
       if (body.method === 'cash') {
         const drawer = openDrawer(tx as unknown as Db, boothId);
@@ -163,31 +210,92 @@ export function posRoutes({ db, hub, boothId, printQueue, config }: Deps): Route
       if (drawerId) {
         writeSynced(tx, schema.cashMovements, { id: uuidv7(), drawerSessionId: drawerId, kind: 'sale', amountXof: order.totalXof, paymentId: payment.id, byUser: user.id });
       }
-      writeSynced(tx, schema.orders, { id: order.id, status: 'paid', paidAt: now });
-      writeSynced(tx, schema.bookings, { id: order.bookingId, status: 'completed' });
-
-      // Paid → prints go to the router, purchased originals to the upload queue.
-      const items = tx.select().from(schema.orderItems).where(eq(schema.orderItems.orderId, order.id)).all();
-      for (const it of items.filter((i) => i.kind === 'print')) {
-        writeSynced(tx, schema.printJobs, {
-          id: uuidv7(), boothId, orderItemId: it.id, photoId: it.photoId!, printSize: it.printSize!,
-          copies: it.qty, status: 'queued', requestedBy: user.id,
-        });
-      }
-      for (const it of items.filter((i) => i.kind === 'digital')) {
-        tx.insert(schema.uploadJobs).values({ id: uuidv7(), photoId: it.photoId!, kind: 'deliverable', priority: 10, status: 'queued', createdAt: now })
-          .onConflictDoUpdate({ target: [schema.uploadJobs.photoId, schema.uploadJobs.kind], set: { priority: 10 } }).run();
-      }
+      fulfil(tx, order, user.id, boothId, now);
       return { order, payment, change: body.method === 'cash' ? body.tenderedXof - order.totalXof : 0 };
     });
     audit(db, boothId, {
-      action: 'payment.take', actorId: user.id, actorRole: user.role, entity: 'payment', entityId: result.payment.id,
-      data: { method: body.method, amount: result.payment.amountXof, reference: result.payment.providerTxId },
+      action: 'payment.take', actorId: user.id, actorRole: user.role, entity: result.payment ? 'payment' : 'order',
+      entityId: result.payment?.id ?? result.order.id,
+      data: { method: body.method, amount: result.payment?.amountXof ?? 0, reference: result.payment?.providerTxId ?? null },
     });
     printQueue.kick();
     hub.send('order.paid', { orderId: result.order.id, bookingId: result.order.bookingId });
-    res.json({ paymentId: result.payment.id, changeXof: result.change });
+    res.json({ paymentId: result.payment?.id ?? null, changeXof: result.change });
   });
+
+  // ─── Mobile Money through the cloud (CinetPay / FedaPay / MTN) ───
+  const needCloud = () => { if (!cloud) throw new HttpError(503, 'cloud_not_configured'); return cloud; };
+  const cloudFail = (e: unknown): never => {
+    if (e instanceof CloudError) throw new HttpError(e.status === 0 ? 503 : 502, e.code);
+    throw e;
+  };
+  const showOnKiosk = (pay: { url: string; amountXof: number } | null) => hub.send('kiosk.payment', pay, ['kiosk']);
+
+  r.post('/api/pos/orders/:id/momo', requirePerm('payment.take'), async (req, res) => {
+    const c = needCloud();
+    const body = CloudPay.parse(req.body);
+    const user = staffOf(req);
+    const order = db.select().from(schema.orders).where(eq(schema.orders.id, String(req.params.id))).get();
+    if (!order || order.boothId !== boothId) throw new HttpError(404, 'order_not_found');
+    if (order.status !== 'open') throw new HttpError(409, `order_${order.status}`);
+    if (!(COUNTRIES[config.country].momo as readonly string[]).includes(body.method)) throw new HttpError(400, 'method_not_offered');
+    const items = db.select().from(schema.orderItems).where(eq(schema.orderItems.orderId, order.id)).all();
+    const paymentId = uuidv7();
+    // The order travels with the request: the outbox may not have pushed it yet.
+    const r2 = await c.post<{ kind: 'redirect' | 'push'; url?: string; provider: 'cinetpay' | 'fedapay' | 'mtn' }>('/api/sync/payments', {
+      order, items, paymentId, method: body.method, phone: body.phone, receivedBy: user.id,
+    }).catch(cloudFail);
+    // Cloud-owned row (not in the outbox): the cloud is the only one allowed to settle it.
+    db.insert(schema.payments).values({
+      id: paymentId, orderId: order.id, method: body.method, provider: r2.provider === 'mtn' || r2.provider === 'cinetpay' || r2.provider === 'fedapay' ? r2.provider : null,
+      idempotencyKey: paymentId, amountXof: order.totalXof, payerPhone: body.phone ?? null, status: 'pending', receivedBy: user.id,
+    }).run();
+    if (r2.kind === 'redirect' && r2.url) showOnKiosk({ url: r2.url, amountXof: order.totalXof });
+    audit(db, boothId, { action: 'payment.momo_start', actorId: user.id, actorRole: user.role, entity: 'payment', entityId: paymentId, data: { method: body.method } });
+    res.status(201).json({ paymentId, kind: r2.kind, url: r2.url ?? null });
+  });
+
+  /** Mirrors the cloud's verdict locally; a success fulfils the order exactly once. */
+  async function followCloud(paymentId: string, userId: string, ask: () => Promise<{ status: string; operatorRef?: string | null; operatorMismatch?: boolean }>) {
+    const local = db.select().from(schema.payments).where(eq(schema.payments.id, paymentId)).get();
+    const order = local && db.select().from(schema.orders).where(eq(schema.orders.id, local.orderId)).get();
+    if (!local || !order || order.boothId !== boothId) throw new HttpError(404, 'payment_not_found');
+    const r3 = local.status === 'pending' ? await ask().catch(cloudFail) : { status: local.status };
+    if (r3.status === 'succeeded' && local.status === 'pending') {
+      const now = Date.now();
+      db.transaction((tx) => {
+        tx.update(schema.payments).set({ status: 'succeeded', confirmedAt: now, providerTxId: r3.operatorRef ?? null }).where(eq(schema.payments.id, paymentId)).run();
+        const fresh = tx.select().from(schema.orders).where(eq(schema.orders.id, order.id)).get()!;
+        if (fresh.status === 'open') fulfil(tx, fresh, userId, boothId, now);
+      });
+      audit(db, boothId, { action: 'payment.momo_confirmed', actorId: userId, entity: 'payment', entityId: paymentId, data: { operatorRef: r3.operatorRef ?? null } });
+      printQueue.kick();
+      showOnKiosk(null);
+      hub.send('order.paid', { orderId: order.id, bookingId: order.bookingId });
+    } else if (r3.status === 'failed' && local.status === 'pending') {
+      db.update(schema.payments).set({ status: 'failed' }).where(eq(schema.payments.id, paymentId)).run();
+      showOnKiosk(null);
+    }
+    return { status: r3.status, operatorRef: r3.operatorRef ?? null, operatorMismatch: r3.operatorMismatch ?? false };
+  }
+
+  r.get('/api/pos/payments/:id', requirePerm('payment.take'), async (req, res) => {
+    const c = needCloud();
+    const id = String(req.params.id);
+    res.json(await followCloud(id, staffOf(req).id, () => c.get(`/api/sync/payments/${id}`)));
+  });
+
+  // Webhook late? The cashier asks the provider directly (optionally with the id from the customer's SMS).
+  r.post('/api/pos/payments/:id/verify', requirePerm('payment.take'), async (req, res) => {
+    const c = needCloud();
+    const id = String(req.params.id);
+    const { operatorRef } = Verify.parse(req.body);
+    const user = staffOf(req);
+    audit(db, boothId, { action: 'payment.verify', actorId: user.id, actorRole: user.role, entity: 'payment', entityId: id, data: { operatorRef: operatorRef ?? null } });
+    res.json(await followCloud(id, user.id, () => c.post(`/api/sync/payments/${id}/verify`, { operatorRef })));
+  });
+
+  r.post('/api/pos/kiosk-payment/clear', requirePerm('payment.take'), (_req, res) => { showOnKiosk(null); res.json({ ok: true }); });
 
   // ─── cash drawer ───
   r.get('/api/pos/drawer', requirePerm('payment.take'), (_req, res) => {

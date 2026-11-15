@@ -236,7 +236,7 @@ export const payments = sqliteTable('payments', {
   orderId: text('order_id').notNull().references(() => orders.id),
   method: text('method', { enum: ['cash', 'wave', 'orange_money', 'mtn_momo', 'celtiis_cash', 'card'] }).notNull(),
   /** null for cash; 'manual' = cashier confirmed the customer's reference. */
-  provider: text('provider', { enum: ['cinetpay', 'fedapay', 'manual'] }),
+  provider: text('provider', { enum: ['cinetpay', 'fedapay', 'mtn', 'manual'] }),
   idempotencyKey: text('idempotency_key').notNull().unique(),
   providerTxId: text('provider_tx_id'),
   amountXof: integer('amount_xof').notNull(),
@@ -265,7 +265,7 @@ export const cashMovements = sqliteTable('cash_movements', {
 export const uploadJobs = sqliteTable('upload_jobs', {
   id: text('id').primaryKey(),
   photoId: text('photo_id').notNull().references(() => photos.id),
-  kind: text('kind', { enum: ['deliverable', 'preview'] }).notNull(),
+  kind: text('kind', { enum: ['deliverable', 'preview', 'thumb'] }).notNull(),
   priority: integer('priority').notNull().default(0),
   status: text('status', { enum: ['queued', 'uploading', 'done', 'failed'] }).notNull(),
   attempts: integer('attempts').notNull().default(0),

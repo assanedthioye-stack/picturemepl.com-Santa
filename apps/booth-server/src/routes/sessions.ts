@@ -9,6 +9,7 @@ import { HttpError } from '../http';
 import { toDto } from '../photos/ingest';
 import { kioskState, setKioskSession } from './kiosk';
 import { dispatchSession, setQueueStatus } from './queue';
+import { enqueueUpload } from '../cloud/sync';
 
 const Dispatch = z.object({ bookingCode: z.string().trim().toUpperCase().min(4).max(12) });
 const Arm = z.object({ cameraId: z.string().optional() });
@@ -78,6 +79,13 @@ export function sessionRoutes(deps: Deps): Router {
       writeSynced(tx, S, { id: s.id, status: 'shot_complete', completedAt: Date.now() });
       writeSynced(tx, schema.bookings, { id: s.bookingId, status: 'shot_complete' });
       setQueueStatus(tx, s.bookingId, 'done');
+      // Online gallery: small previews now; every original later (so photos bought online after the event exist).
+      for (const p of tx.select({ id: schema.photos.id }).from(schema.photos)
+        .where(and(eq(schema.photos.sessionId, s.id), eq(schema.photos.ingestStatus, 'ready'), eq(schema.photos.hidden, false))).all()) {
+        enqueueUpload(tx as never, p.id, 'thumb', 5);
+        enqueueUpload(tx as never, p.id, 'preview', 5);
+        enqueueUpload(tx as never, p.id, 'deliverable', 0);
+      }
     });
     // The kiosk keeps showing this family's photos so they can keep picking favourites.
     audit(db, boothId, { action: 'session.complete', actorId: user.id, actorRole: user.role, entity: 'photo_session', entityId: s.id });
