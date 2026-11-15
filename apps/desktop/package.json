@@ -1,0 +1,42 @@
+{
+  "name": "@pmp/desktop",
+  "productName": "Picture Me Please Booth",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "dev": "vite build && node build.mjs && electron .",
+    "build": "vite build && node build.mjs",
+    "dist:win": "pnpm build && electron-builder --win --x64",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p . && tsc -p electron"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "^2.2.2",
+    "better-sqlite3": "^13.2.0",
+    "pdf-to-printer": "^5.8.1",
+    "sharp": "^0.35.5"
+  },
+  "optionalDependencies": {
+    "@brick-a-brack/napi-canon-cameras": "0.1.5"
+  },
+  "devDependencies": {
+    "@pmp/booth-server": "workspace:*",
+    "@pmp/shared": "workspace:*",
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/node": "^22.19.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "electron": "^45.3.2",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
+  }
+}

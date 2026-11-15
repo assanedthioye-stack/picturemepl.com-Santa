@@ -1,0 +1,36 @@
+{
+  "name": "@pmp/booth-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main.ts",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "user:add": "tsx src/cli/user-add.ts",
+    "dev:session": "tsx src/cli/dev-session.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@node-rs/argon2": "^2.2.2",
+    "@pmp/db": "workspace:*",
+    "@pmp/shared": "workspace:*",
+    "better-sqlite3": "^13.2.0",
+    "drizzle-orm": "^0.45.4",
+    "express": "^5.3.0",
+    "pdf-lib": "^1.17.1",
+    "pdf-to-printer": "^5.8.1",
+    "sharp": "^0.35.5",
+    "zod": "^4.1.0"
+  },
+  "optionalDependencies": {
+    "@brick-a-brack/napi-canon-cameras": "0.1.5"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.19.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.0"
+  }
+}

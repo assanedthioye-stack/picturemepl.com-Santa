@@ -1,0 +1,28 @@
+appId: com.picturemeplease.booth
+productName: Picture Me Please Booth
+directories:
+  output: release
+files:
+  - dist-electron/**
+  - package.json
+extraResources:
+  - from: dist/renderer
+    to: renderer
+  - from: ../../packages/db/drizzle
+    to: migrations
+# Executables, DLLs and scripts must live on disk, not inside app.asar.
+asarUnpack:
+  - dist-electron/wia-poll.ps1
+  - node_modules/pdf-to-printer/**
+  - node_modules/@brick-a-brack/napi-canon-cameras/**
+  - node_modules/sharp/**
+  - node_modules/@img/**
+npmRebuild: true
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  oneClick: false
+  perMachine: true
+  allowToChangeInstallationDirectory: false
