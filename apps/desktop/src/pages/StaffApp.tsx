@@ -1,44 +1,127 @@
 import { useEffect, useState } from 'react';
-import { can } from '@pmp/shared';
+import { can, type MessageKey, type Permission } from '@pmp/shared';
 import { api, type Me } from '../api';
-import { LangToggle, useT } from '../i18n';
+import { errorText, LangToggle, useT } from '../i18n';
+import { Cashier } from './Cashier';
+import { Host } from './Host';
 import { Login } from './Login';
 import { Photographer } from './Photographer';
 
+type Screen = 'home' | 'host' | 'photographer' | 'cashier';
+const SCREENS: Array<{ id: Exclude<Screen, 'home'>; perm: Permission; label: MessageKey }> = [
+  { id: 'host', perm: 'session.dispatch', label: 'nav.host' },
+  { id: 'photographer', perm: 'session.shoot', label: 'nav.photographer' },
+  { id: 'cashier', perm: 'payment.take', label: 'nav.cashier' },
+];
+const homeOf = (role: Me['role']): Screen => (role === 'host' || role === 'photographer' || role === 'cashier' ? role : 'home');
+
 export function StaffApp() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
-  const [screen, setScreen] = useState<'home' | 'photographer'>('home');
-  const { setLocale } = useT();
+  const [screen, setScreen] = useState<Screen>('home');
+  const { setLocale, t } = useT();
 
-  useEffect(() => { api<Me>('GET', '/api/auth/me').then(setMe, () => setMe(null)); }, []);
+  useEffect(() => { api<Me>('GET', '/api/auth/me').then((u) => { setMe(u); setScreen(homeOf(u.role)); }, () => setMe(null)); }, []);
 
-  const signIn = (u: Me) => { setLocale(u.locale); setMe(u); setScreen(u.role === 'photographer' ? 'photographer' : 'home'); };
+  const signIn = (u: Me) => { setLocale(u.locale); setMe(u); setScreen(homeOf(u.role)); };
   const signOut = async () => { await api('POST', '/api/auth/logout').catch(() => {}); setMe(null); };
 
   if (me === undefined) return null;
   if (!me) return <Login onSignedIn={signIn} />;
-  if (screen === 'photographer' && can(me.role, 'session.shoot')) {
-    return <Photographer me={me} onSignOut={signOut} onBack={me.role === 'photographer' ? undefined : () => setScreen('home')} />;
-  }
-  return <RoleHome me={me} onSignOut={signOut} onOpen={setScreen} />;
+
+  // Tabs only for roles that can reach more than one screen (supervisor, admin).
+  const allowed = SCREENS.filter((s) => can(me.role, s.perm));
+  const nav = homeOf(me.role) === 'home' && (
+    <nav className="flex gap-1 rounded-xl bg-slate-100 p-1" aria-label="Écrans">
+      {[{ id: 'home' as Screen, label: 'app.title' as MessageKey }, ...allowed].map((s) => (
+        <button key={s.id} onClick={() => setScreen(s.id)} aria-current={screen === s.id ? 'page' : undefined}
+          className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${screen === s.id ? 'bg-white shadow' : 'text-slate-600'}`}>
+          {s.id === 'home' ? '⌂' : t(s.label)}
+        </button>
+      ))}
+    </nav>
+  );
+  const props = { me, onSignOut: signOut, nav };
+  if (screen === 'host' && can(me.role, 'session.dispatch')) return <Host {...props} />;
+  if (screen === 'photographer' && can(me.role, 'session.shoot')) return <Photographer {...props} />;
+  if (screen === 'cashier' && can(me.role, 'payment.take')) return <Cashier {...props} />;
+  return <RoleHome {...props} />;
 }
 
-/** Landing page for roles whose screens arrive in Phase 2; links to what the role may already use. */
-function RoleHome({ me, onSignOut, onOpen }: { me: Me; onSignOut(): void; onOpen(s: 'photographer'): void }) {
+/** Supervisor/admin home: tablet pairing and device list. */
+function RoleHome({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav?: React.ReactNode }) {
   const { t } = useT();
   return (
     <div className="flex h-full flex-col">
-      <TopBar me={me} onSignOut={onSignOut} />
-      <main className="mx-auto flex w-full max-w-xl flex-1 flex-col items-center justify-center gap-6 p-6 text-center">
-        <h1 className="text-2xl font-semibold">{t(`role.${me.role}`)}</h1>
-        <p className="text-slate-600">{t('home.phase2')}</p>
-        {can(me.role, 'session.shoot') && (
-          <button onClick={() => onOpen('photographer')} className="rounded-xl bg-brand-600 px-6 py-3 font-semibold text-white hover:bg-brand-700">
-            {t('home.open.photographer')}
-          </button>
-        )}
+      <TopBar me={me} onSignOut={onSignOut}>{nav}</TopBar>
+      <main className="mx-auto w-full max-w-3xl flex-1 overflow-y-auto p-6">
+        <h1 className="mb-4 text-2xl font-semibold">{t(`role.${me.role}`)}</h1>
+        {can(me.role, 'devices.manage') ? <Devices /> : <p className="text-slate-600">{t('home.phase2')}</p>}
       </main>
     </div>
+  );
+}
+
+interface Device { id: string; name: string; pairedAt: number; lastSeenAt: number | null; revokedAt: number | null }
+interface Pairing { setupQr: string; pairQr: string; setupUrl: string; expiresAt: number }
+
+function Devices() {
+  const { t, locale } = useT();
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [name, setName] = useState('');
+  const [pairing, setPairing] = useState<Pairing | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = () => api<Device[]>('GET', '/api/devices').then(setDevices, () => {});
+  useEffect(() => { void load(); }, []);
+  useEffect(() => { // pairing QR expires; refresh the list when it does (a tablet probably paired)
+    if (!pairing) return;
+    const id = setTimeout(() => { setPairing(null); void load(); }, pairing.expiresAt - Date.now());
+    return () => clearTimeout(id);
+  }, [pairing]);
+
+  async function pair(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    try { setPairing(await api<Pairing>('POST', '/api/devices/pair', { name })); } catch (err) { setError(errorText(t, err)); }
+  }
+  const when = (ms: number | null) => (ms ? new Date(ms).toLocaleString(locale === 'fr' ? 'fr-FR' : 'en-GB') : '—');
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-5">
+      <h2 className="mb-3 text-lg font-semibold">{t('devices.title')}</h2>
+      {pairing ? (
+        <div className="grid gap-4 sm:grid-cols-2">
+          {/* SVGs are generated by our own server from our own URLs. */}
+          <figure><figcaption className="mb-2 text-sm text-slate-600">{t('devices.step1')}</figcaption>
+            <div className="mx-auto max-w-56" dangerouslySetInnerHTML={{ __html: pairing.setupQr }} />
+            <p className="mt-1 text-center font-mono text-xs text-slate-500">{pairing.setupUrl}</p></figure>
+          <figure><figcaption className="mb-2 text-sm text-slate-600">{t('devices.step2')}</figcaption>
+            <div className="mx-auto max-w-56" dangerouslySetInnerHTML={{ __html: pairing.pairQr }} /></figure>
+          <button onClick={() => { setPairing(null); void load(); }} className="rounded-lg border border-slate-300 py-2 sm:col-span-2">OK</button>
+        </div>
+      ) : (
+        <form onSubmit={pair} className="mb-4 flex gap-2">
+          <label className="sr-only" htmlFor="dev-name">{t('devices.name')}</label>
+          <input id="dev-name" required value={name} onChange={(e) => setName(e.target.value)} placeholder={t('devices.name')}
+            className="flex-1 rounded-xl border border-slate-300 px-4 py-2" />
+          <button className="rounded-xl bg-brand-600 px-4 font-semibold text-white">{t('devices.pair')}</button>
+        </form>
+      )}
+      {error && <p role="alert" className="mb-3 rounded-lg bg-brand-50 px-3 py-2 text-brand-700">{error}</p>}
+      {devices.length === 0 && !pairing && <p className="text-slate-500">{t('devices.none')}</p>}
+      <ul className="divide-y divide-slate-100">
+        {devices.map((d) => (
+          <li key={d.id} className={`flex items-center gap-3 py-2 ${d.revokedAt ? 'opacity-40' : ''}`}>
+            <span className="flex-1 font-medium">{d.name}</span>
+            <span className="text-sm text-slate-500">{when(d.lastSeenAt ?? d.pairedAt)}</span>
+            {!d.revokedAt && (
+              <button onClick={() => api('POST', `/api/devices/${d.id}/revoke`).then(load)} className="rounded-lg border border-slate-300 px-3 py-1 text-sm">
+                {t('devices.revoke')}
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

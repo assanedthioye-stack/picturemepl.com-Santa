@@ -11,7 +11,11 @@ import { authRoutes } from './routes/auth';
 import { deviceRoutes } from './routes/devices';
 import { kioskRoutes, kioskState } from './routes/kiosk';
 import { sessionRoutes } from './routes/sessions';
+import { queueRoutes } from './routes/queue';
+import { posRoutes } from './routes/pos';
 import type { MirrorService } from './storage/mirror';
+import { lanGuard, pairingRoutes } from './lan/devices';
+import type { TlsMaterial } from './lan/tls';
 
 export interface Deps {
   db: Db;
@@ -22,17 +26,23 @@ export interface Deps {
   printQueue: PrintQueue;
   spooler: Spooler;
   mirror: MirrorService;
+  /** null when LAN access is off. */
+  tls: TlsMaterial | null;
 }
 
 export function createApp(deps: Deps): express.Express {
   const app = express();
   app.disable('x-powered-by');
+  app.use(lanGuard(deps.db, deps.config.httpsPort));
   app.use(express.json({ limit: '100kb' }));
   app.use(requireJson);
   app.use(authenticate(deps.db, deps.config.kioskToken));
 
   app.use(authRoutes(deps));
+  app.use(pairingRoutes(deps));
   app.use(sessionRoutes(deps));
+  app.use(queueRoutes(deps));
+  app.use(posRoutes(deps));
   app.use(kioskRoutes(deps));
   app.use(deviceRoutes(deps));
 

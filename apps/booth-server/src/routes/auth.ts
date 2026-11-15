@@ -21,7 +21,7 @@ export function authRoutes({ db, boothId, config }: Deps): Router {
     if (!body.success) return res.status(400).json({ error: 'invalid' });
     const result = await login(db, boothId, body.data.userId, body.data.secret);
     if (!result.ok) return res.status(result.reason === 'locked' ? 423 : 401).json({ error: result.reason });
-    res.setHeader('Set-Cookie', cookie(STAFF_COOKIE, result.token, SESSION_SEC));
+    res.setHeader('Set-Cookie', cookie(STAFF_COOKIE, result.token, SESSION_SEC, { secure: req.secure }));
     res.json(result.user);
   });
 

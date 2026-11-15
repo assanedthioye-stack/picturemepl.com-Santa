@@ -112,10 +112,10 @@ function placeKiosk() {
 
 app.whenReady().then(async () => {
   if (app.isPackaged) Menu.setApplicationMenu(null);
-  // Deny camera/mic/geolocation etc.; the UI needs none of them.
-  for (const s of [session.defaultSession, session.fromPartition('kiosk')]) {
-    s.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
-  }
+  // Staff window: camera only (Host QR scanner), only for our own pages. Kiosk: nothing.
+  session.defaultSession.setPermissionRequestHandler((_wc, perm, cb, details) =>
+    cb(perm === 'media' && details.requestingUrl.startsWith(ORIGIN) && !('mediaTypes' in details && details.mediaTypes?.includes('audio'))));
+  session.fromPartition('kiosk').setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
   powerSaveBlocker.start('prevent-display-sleep');
   await startServer();
   createStaffWindow();

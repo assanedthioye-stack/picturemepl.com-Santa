@@ -36,3 +36,16 @@ export function LangToggle({ dark = false }: { dark?: boolean }) {
     </div>
   );
 }
+
+/** Whole F CFA, e.g. "25 000 F CFA" (fr) / "F CFA 25,000" (en). */
+export function money(locale: Locale, xof: number): string {
+  return new Intl.NumberFormat(locale === 'fr' ? 'fr-FR' : 'en-GB', { style: 'currency', currency: 'XOF', maximumFractionDigits: 0 }).format(xof);
+}
+
+/** Server error codes → translated text ("err.<code>"), falling back to the generic message. */
+export function errorText(t: (k: MessageKey) => string, e: unknown): string {
+  const code = e instanceof Error ? e.message : String(e);
+  const key = `err.${code}` as MessageKey;
+  const text = t(key);
+  return text === key ? `${t('error.generic')} (${code})` : text;
+}

@@ -11,6 +11,8 @@ import { uuidv7 } from './ids';
 import { recoverIngest, type IngestCtx } from './photos/ingest';
 import { PrintQueue, windowsSpooler, type Spooler } from './print/router';
 import { MirrorService } from './storage/mirror';
+import { seedPackages } from './routes/pos';
+import { ensureTls, type TlsMaterial } from './lan/tls';
 
 export function openBoothDb(config: Config): Db {
   // Not the mirror: its absence is how we detect an unplugged drive.
@@ -34,10 +36,12 @@ export interface Booth {
   cameras: Map<string, CameraService>;
   printQueue: PrintQueue;
   mirror: MirrorService;
+  /** Resolves once the LAN certificate exists (never, when LAN is off). */
+  lanReady: Promise<TlsMaterial>;
   stop(): Promise<void>;
 }
 
-export async function startBooth(config: Config, opts: { spooler?: Spooler } = {}): Promise<Booth> {
+export async function startBooth(config: Config, opts: { spooler?: Spooler; lanIps?: string[] } = {}): Promise<Booth> {
   const db = openBoothDb(config);
   const boothId = boothIdOf(db);
   const hub = new EventHub();
@@ -46,6 +50,7 @@ export async function startBooth(config: Config, opts: { spooler?: Spooler } = {
   if (!db.select().from(schema.cameras).where(eq(schema.cameras.boothId, boothId)).get()) {
     writeSynced(db, schema.cameras, { id: uuidv7(), boothId, name: 'Caméra 1', driver: 'auto' });
   }
+  seedPackages(db);
   const ingest: IngestCtx = {
     db, hub, sessionsDir: config.sessionsDir,
     watermark: getSetting(db, 'preview.watermark') ?? 'Picture Me Please · APERÇU',
@@ -74,9 +79,24 @@ export async function startBooth(config: Config, opts: { spooler?: Spooler } = {
   printQueue.recover();
   await Promise.all([...cameras.values()].map((c) => c.start()));
 
-  const app = createApp({ db, config, hub, boothId, cameras, printQueue, spooler, mirror });
+  // Wi-Fi may come up after the app: the LAN side retries until the PC has a private address.
+  let tls: TlsMaterial | null = null;
+  const tlsDir = path.join(config.dataDir, 'tls');
+  const lanReady = new Promise<TlsMaterial>((resolve) => {
+    if (!config.lan) return;
+    const attempt = async () => {
+      try {
+        resolve((tls = await ensureTls(tlsDir, opts.lanIps)));
+      } catch (e) {
+        if ((e as Error).message !== 'no_lan_address') console.error('LAN TLS setup failed', e);
+        setTimeout(attempt, 30_000).unref();
+      }
+    };
+    void attempt();
+  });
+  const app = createApp({ db, config, hub, boothId, cameras, printQueue, spooler, mirror, get tls() { return tls; } });
   return {
-    app, db, hub, cameras, printQueue, mirror,
+    app, db, hub, cameras, printQueue, mirror, lanReady,
     async stop() {
       await Promise.all([...cameras.values()].map((c) => c.stop()));
       await mirror.stop();

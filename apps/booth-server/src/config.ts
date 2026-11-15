@@ -16,7 +16,12 @@ export interface Config {
   migrationsDir: string;
   rendererDir: string | null;
   host: string;
+  /** HTTP: the booth PC's own windows (loopback) + the LAN certificate setup page. */
   port: number;
+  /** HTTPS for paired LAN devices (Host tablet). */
+  httpsPort: number;
+  /** Serve paired LAN devices (PMP_LAN=0 keeps everything on loopback). */
+  lan: boolean;
   /** Per-boot secret handed by Electron main to the kiosk window only. */
   kioskToken: string;
   /** Force a camera driver ('edsdk' | 'wia' | 'mock'); otherwise the camera row decides. */
@@ -41,9 +46,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     spoolDir: path.join(root, 'PrintSpool'),
     migrationsDir: env.PMP_MIGRATIONS_DIR ?? path.resolve(import.meta.dirname, '../../../packages/db/drizzle'),
     rendererDir: env.PMP_RENDERER_DIR ?? null,
-    // Phase 1 has no LAN devices yet: loopback only until TLS + device pairing land.
-    host: '127.0.0.1',
+    host: env.PMP_LAN === '0' ? '127.0.0.1' : '0.0.0.0',
     port: Number(env.PMP_PORT ?? 4100),
+    httpsPort: Number(env.PMP_HTTPS_PORT ?? 4443),
+    lan: env.PMP_LAN !== '0',
     kioskToken: env.PMP_KIOSK_TOKEN,
     cameraDriver: env.PMP_CAMERA_DRIVER ?? null,
   };

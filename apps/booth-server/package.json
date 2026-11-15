@@ -7,12 +7,13 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "user:add": "tsx src/cli/user-add.ts",
-    "dev:session": "tsx src/cli/dev-session.ts",
+    "dev:booking": "tsx src/cli/dev-booking.ts",
     "test": "vitest run",
     "typecheck": "tsc -p ."
   },
   "dependencies": {
     "@node-rs/argon2": "^2.2.2",
+    "@peculiar/x509": "^3.1.0",
     "@pmp/db": "workspace:*",
     "@pmp/shared": "workspace:*",
     "better-sqlite3": "^13.2.0",
@@ -20,6 +21,8 @@
     "express": "^5.3.0",
     "pdf-lib": "^1.17.1",
     "pdf-to-printer": "^5.8.1",
+    "qrcode": "^1.5.4",
+    "reflect-metadata": "^0.2.2",
     "sharp": "^0.35.5",
     "zod": "^4.1.0"
   },
@@ -29,6 +32,7 @@
   "devDependencies": {
     "@types/express": "^5.0.3",
     "@types/node": "^22.19.0",
+    "@types/qrcode": "^1.5.6",
     "tsx": "^4.20.0",
     "typescript": "^5.9.3",
     "vitest": "^5.1.0"

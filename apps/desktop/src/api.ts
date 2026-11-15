@@ -41,4 +41,5 @@ export interface StorageInfo {
 }
 export interface SessionRow {
   id: string; code: string; status: 'dispatched' | 'armed' | 'shot_complete' | 'cancelled'; bookingCode: string; partySize: number;
+  familyName: string | null; photoCount: number;
 }

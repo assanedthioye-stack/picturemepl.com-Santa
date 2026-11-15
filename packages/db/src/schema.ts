@@ -31,6 +31,8 @@ export const users = sqliteTable('users', {
 export const customers = sqliteTable('customers', {
   id: text('id').primaryKey(),
   phone: text('phone').notNull(),
+  /** ISO country of the phone number: 'SN' | 'BJ' | 'CI'. */
+  country: text('country'),
   fullName: text('full_name'),
   email: text('email'),
   locale: text('locale', { enum: ['fr', 'en'] }).notNull().default('fr'),
@@ -137,6 +139,8 @@ export const orderItems = sqliteTable('order_items', {
   packageId: text('package_id'),
   photoId: text('photo_id').references(() => photos.id),
   kind: text('kind', { enum: ['deposit', 'bundle', 'print', 'digital'] }).notNull(),
+  /** For 'print' lines: the paid size, so a 4x6 slot can never come out as an 8x10. */
+  printSize: text('print_size', { enum: ['4x6', '5x7', '8x10', 'custom'] }),
   qty: integer('qty').notNull(),
   unitPriceXof: integer('unit_price_xof').notNull(),
   lineTotalXof: integer('line_total_xof').notNull(),
@@ -177,7 +181,106 @@ export const auditLogs = sqliteTable('audit_logs', {
   serverSeq: integer('server_seq'),
 }, (t) => [index('audit_action_entity_at').on(t.action, t.entityId, t.at)]);
 
+export const queueEntries = sqliteTable('queue_entries', {
+  id: text('id').primaryKey(),
+  boothId: text('booth_id').notNull(),
+  bookingId: text('booking_id').notNull().unique().references(() => bookings.id),
+  lane: text('lane', { enum: ['booked', 'walk_in'] }).notNull(),
+  /** booked: appointment time (or check-in time until slots sync); walk-in: time added. */
+  sortAt: integer('sort_at').notNull(),
+  manualRank: integer('manual_rank'),
+  status: text('status', { enum: ['waiting', 'called', 'shooting', 'done', 'skipped', 'left'] }).notNull(),
+  enqueuedAt: integer('enqueued_at').notNull(),
+  calledAt: integer('called_at'),
+  ...synced,
+}, (t) => [index('queue_booth_status').on(t.boothId, t.status)]);
+
+export const packages = sqliteTable('packages', {
+  id: text('id').primaryKey(),
+  eventId: text('event_id'),
+  code: text('code').notNull().unique(),
+  nameFr: text('name_fr').notNull(),
+  nameEn: text('name_en').notNull(),
+  /** VAT-inclusive, whole XOF. */
+  priceXof: integer('price_xof').notNull(),
+  /** Digital files included: -1 = every selected photo. */
+  digitalsIncluded: integer('digitals_included').notNull().default(0),
+  /** Prints included per size, e.g. {"4x6": 3, "8x10": 1}. */
+  prints: text('prints', { mode: 'json' }).$type<Partial<Record<'4x6' | '5x7' | '8x10' | 'custom', number>>>().notNull(),
+  sort: integer('sort').notNull().default(0),
+  active: integer('active', { mode: 'boolean' }).notNull().default(true),
+  ...synced,
+});
+
+export const drawerSessions = sqliteTable('drawer_sessions', {
+  id: text('id').primaryKey(),
+  boothId: text('booth_id').notNull(),
+  openedBy: text('opened_by').notNull().references(() => users.id),
+  openedAt: integer('opened_at').notNull(),
+  openingFloatXof: integer('opening_float_xof').notNull(),
+  closedBy: text('closed_by').references(() => users.id),
+  closedAt: integer('closed_at'),
+  /** Blind count: entered before the cashier sees the expected amount. */
+  countedXof: integer('counted_xof'),
+  expectedXof: integer('expected_xof'),
+  varianceXof: integer('variance_xof'),
+  approvedBy: text('approved_by').references(() => users.id),
+  status: text('status', { enum: ['open', 'counted', 'approved'] }).notNull(),
+  ...synced,
+});
+
+export const payments = sqliteTable('payments', {
+  id: text('id').primaryKey(),
+  orderId: text('order_id').notNull().references(() => orders.id),
+  method: text('method', { enum: ['cash', 'wave', 'orange_money', 'mtn_momo', 'card'] }).notNull(),
+  /** null for cash; 'manual' = cashier confirmed the customer's reference. */
+  provider: text('provider', { enum: ['cinetpay', 'fedapay', 'manual'] }),
+  idempotencyKey: text('idempotency_key').notNull().unique(),
+  providerTxId: text('provider_tx_id'),
+  amountXof: integer('amount_xof').notNull(),
+  payerPhone: text('payer_phone'),
+  status: text('status', { enum: ['pending', 'succeeded', 'failed', 'cancelled'] }).notNull(),
+  receivedBy: text('received_by').references(() => users.id),
+  drawerSessionId: text('drawer_session_id').references(() => drawerSessions.id),
+  confirmedAt: integer('confirmed_at'),
+  ...synced,
+}, (t) => [uniqueIndex('payments_provider_tx').on(t.method, t.providerTxId)]);
+
+export const cashMovements = sqliteTable('cash_movements', {
+  id: text('id').primaryKey(),
+  drawerSessionId: text('drawer_session_id').notNull().references(() => drawerSessions.id),
+  kind: text('kind', { enum: ['sale', 'refund', 'drop', 'payout', 'float_add'] }).notNull(),
+  /** Signed: + into the drawer, − out. */
+  amountXof: integer('amount_xof').notNull(),
+  paymentId: text('payment_id').references(() => payments.id),
+  byUser: text('by_user').notNull().references(() => users.id),
+  note: text('note'),
+  ...synced,
+});
+
 // ─── booth-local only ───
+/** Drained by the cloud uploader (Phase 3): purchased originals first. */
+export const uploadJobs = sqliteTable('upload_jobs', {
+  id: text('id').primaryKey(),
+  photoId: text('photo_id').notNull().references(() => photos.id),
+  kind: text('kind', { enum: ['deliverable', 'preview'] }).notNull(),
+  priority: integer('priority').notNull().default(0),
+  status: text('status', { enum: ['queued', 'uploading', 'done', 'failed'] }).notNull(),
+  attempts: integer('attempts').notNull().default(0),
+  lastError: text('last_error'),
+  createdAt: integer('created_at').notNull(),
+}, (t) => [uniqueIndex('upload_jobs_photo_kind').on(t.photoId, t.kind)]);
+
+export const devices = sqliteTable('devices', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  tokenHash: text('token_hash').notNull().unique(),
+  pairedBy: text('paired_by').notNull().references(() => users.id),
+  pairedAt: integer('paired_at').notNull(),
+  lastSeenAt: integer('last_seen_at'),
+  revokedAt: integer('revoked_at'),
+});
+
 export const staffSessions = sqliteTable('staff_sessions', {
   tokenHash: text('token_hash').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id),

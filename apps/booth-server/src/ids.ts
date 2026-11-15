@@ -11,6 +11,13 @@ export function uuidv7(): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
+/** n random decimal digits (leading zeros allowed). */
+export function digitCode(n: number): string {
+  let s = '';
+  for (let i = 0; i < n; i++) s += String(randomInt(10));
+  return s;
+}
+
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 /** Human code without look-alike characters (no I, L, O, U). */
 export function humanCode(length: number): string {

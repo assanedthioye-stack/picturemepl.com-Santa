@@ -1,14 +1,14 @@
 import { Router } from 'express';
-import { and, desc, eq, gt, inArray } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { schema, writeSynced } from '@pmp/db';
 import type { Deps } from '../app';
 import { audit } from '../audit';
 import { requirePerm, staffOf } from '../auth/auth';
 import { HttpError } from '../http';
-import { humanCode, uuidv7 } from '../ids';
 import { toDto } from '../photos/ingest';
 import { kioskState, setKioskSession } from './kiosk';
+import { dispatchSession, setQueueStatus } from './queue';
 
 const Dispatch = z.object({ bookingCode: z.string().trim().toUpperCase().min(4).max(12) });
 const Arm = z.object({ cameraId: z.string().optional() });
@@ -28,20 +28,19 @@ export function sessionRoutes(deps: Deps): Router {
     const booking = db.select().from(schema.bookings).where(eq(schema.bookings.code, bookingCode)).get();
     if (!booking) throw new HttpError(404, 'booking_not_found');
     if (!['confirmed', 'checked_in', 'shot_complete'].includes(booking.status)) throw new HttpError(409, `booking_${booking.status}`);
-    const session = writeSynced(db, S, {
-      id: uuidv7(), bookingId: booking.id, boothId, code: humanCode(4), dispatchedBy: user.id, status: 'dispatched',
-    });
-    audit(db, boothId, { action: 'session.dispatch', actorId: user.id, actorRole: user.role, entity: 'photo_session', entityId: session.id });
+    const session = dispatchSession(db, boothId, booking.id, user);
     emit(session.id);
     res.status(201).json(session);
   });
 
   r.get('/api/sessions', requirePerm('session.shoot', 'session.dispatch'), (_req, res) => {
-    res.json(db.select({ session: S, bookingCode: schema.bookings.code, partySize: schema.bookings.partySize })
+    const photoCount = sql<number>`(select count(*) from photos p where p.session_id = ${S.id} and p.ingest_status = 'ready' and p.hidden = 0)`;
+    res.json(db.select({ session: S, bookingCode: schema.bookings.code, partySize: schema.bookings.partySize, familyName: schema.customers.fullName, photoCount })
       .from(S).innerJoin(schema.bookings, eq(schema.bookings.id, S.bookingId))
+      .innerJoin(schema.customers, eq(schema.customers.id, schema.bookings.customerId))
       .where(and(inArray(S.status, ['dispatched', 'armed', 'shot_complete']), gt(S.createdAt, Date.now() - 18 * 3600_000)))
       .orderBy(desc(S.createdAt)).all()
-      .map((r) => ({ ...r.session, bookingCode: r.bookingCode, partySize: r.partySize })));
+      .map((r) => ({ ...r.session, bookingCode: r.bookingCode, partySize: r.partySize, familyName: r.familyName, photoCount: r.photoCount })));
   });
 
   r.post('/api/sessions/:id/arm', requirePerm('session.shoot'), (req, res) => {
@@ -57,6 +56,7 @@ export function sessionRoutes(deps: Deps): Router {
       writeSynced(tx, schema.cameras, { id: cameraId, armedSessionId: s.id, armedBy: user.id, armedAt: Date.now() });
       writeSynced(tx, S, { id: s.id, status: 'armed', cameraId, photographerId: user.id, armedAt: s.armedAt ?? Date.now(), completedAt: null });
       writeSynced(tx, schema.bookings, { id: s.bookingId, status: 'in_session' });
+      setQueueStatus(tx, s.bookingId, 'shooting');
     });
     setKioskSession(db, String(req.params.id));
     audit(db, boothId, { action: 'session.arm', actorId: user.id, actorRole: user.role, entity: 'photo_session', entityId: String(req.params.id), data: { cameraId } });
@@ -74,6 +74,7 @@ export function sessionRoutes(deps: Deps): Router {
       if (s.cameraId) writeSynced(tx, schema.cameras, { id: s.cameraId, armedSessionId: null, armedBy: null, armedAt: null });
       writeSynced(tx, S, { id: s.id, status: 'shot_complete', completedAt: Date.now() });
       writeSynced(tx, schema.bookings, { id: s.bookingId, status: 'shot_complete' });
+      setQueueStatus(tx, s.bookingId, 'done');
     });
     // The kiosk keeps showing this family's photos so they can keep picking favourites.
     audit(db, boothId, { action: 'session.complete', actorId: user.id, actorRole: user.role, entity: 'photo_session', entityId: s.id });

@@ -25,7 +25,7 @@ First accounts (Admin screens arrive in Phase 2):
 ```bash
 pnpm --filter @pmp/booth-server user:add --name "Awa Diop" --role cashier --secret 4821
 pnpm --filter @pmp/booth-server user:add --name "Fatou Sow" --role admin --secret "a-long-password"
-pnpm --filter @pmp/booth-server dev:session   # DEV: a walk-in booking, a dispatched session, a paid 4x6 order line
+pnpm --filter @pmp/booth-server dev:booking -- --code 482913   # DEV: a confirmed online appointment to check in at the Host
 ```
 
 Staff PINs are 4–6 digits; admins need a password of 10+ characters. 5 wrong tries lock the account for 15 minutes.
@@ -70,6 +70,27 @@ Restart the app afterwards. Every original is copied right after download, read 
 The kiosk window opens full-screen on the first non-primary display (`PMP_KIOSK_DISPLAY_ID` to pick one) and moves when screens are plugged/unplugged. It uses its own cookie partition and a per-boot token, so it can only see and "♥" the current family's previews.
 **Touch calibration:** on Windows, map the touch input to the 2nd screen once (Control Panel → Tablet PC Settings → Setup), or taps land on the staff monitor.
 
+## Booth day (Phase 2)
+
+1. **Host** (`Accueil`, booth PC or paired tablet): scan the family's QR code (camera) or type the 6-digit booking code; or register a walk-in (name, phone, country SN/BJ/CI). Appointments are queued **ahead of** walk-ins. The walk-in's 6-digit gallery PIN is shown **once**; give it to the family (SMS sending arrives with the cloud). **Envoyer au photographe** pops the family up on the Photographer screen.
+2. **Photographer**: the family's name, session code and live photo count; **Terminer et envoyer en caisse** hands them to the cashier.
+3. **Cashier** (`Caisse`): picking a family also shows their photos on the 2nd screen; ♥ picked by the family pre-select the digital photos. Packages with prints get one photo slot per print. Totals are VAT-inclusive XOF; 18 % VAT is extracted (`tax.vat_bp` setting).
+   - **Cash** needs an open drawer (opening float). Every cash sale is logged as a drawer movement. Closing uses a blind count and shows expected vs counted.
+   - **Mobile Money** (Wave, Orange Money, MTN MoMo): the customer pays the booth's merchant number on their phone and shows the receipt; the cashier types the transaction reference. A reference is accepted once. Automatic push/confirmation via CinetPay/FedaPay needs the cloud webhook (Phase 3).
+   - Payment confirmed → print jobs go to the print router, purchased originals go to `upload_jobs` (drained by the Phase 3 uploader).
+
+**Prices are placeholders** (seeded on first start): Pack numérique 10 000, 3 × 10×15 7 500, 2 × 20×25 15 000, Combo 25 000 F CFA. Change them in the `packages` table before launch; the Admin screen comes in Phase 3.
+
+## Tablets on the LAN
+
+The booth PC serves the staff app to **paired** devices over HTTPS on port 4443 (browsers only allow the camera, needed for QR scanning, on HTTPS).
+
+- On first start the booth creates its own certificate authority (`Data\tls\`). It is **name-constrained** to `*.local` and private IP ranges, so it can't be used to impersonate real websites.
+- **Pairing** (supervisor or admin, on the booth PC): home screen → *Appairer une tablette*. Scan QR 1 on the tablet to install the certificate (once per tablet), then QR 2 (valid 5 minutes, single use). Staff then sign in with their PIN as usual. Lost tablet → *Retirer*.
+- Plain HTTP from the LAN only serves `/setup` and `/ca.crt`. Every other LAN request needs HTTPS + a paired device; the booth PC itself (loopback) is always trusted.
+- The installer opens TCP 4100/4443 on **private** networks only: set the booth Wi-Fi to *Private* in Windows. Give the PC a DHCP reservation; the server certificate follows the IPs seen at startup. If the PC boots before Wi-Fi is up, LAN access starts by itself once an address appears.
+- `PMP_LAN=0` keeps everything on loopback.
+
 ## Printing
 
 | Size | Printer (default match) |
@@ -83,5 +104,5 @@ DNP tip: add the DS620A twice in Windows with different default paper ("DNP DS62
 
 ## Security notes
 
-- The server listens on **127.0.0.1 only** until LAN TLS + device pairing land; there are no LAN devices in Phase 1.
-- HttpOnly + SameSite=Strict cookies, JSON-only writes, argon2id PIN hashes, hash-chained audit log (`verifyAuditChain`).
+- LAN: HTTPS + device pairing (above); pairing can only be started from the booth PC.
+- HttpOnly + SameSite=Strict staff cookies (`Secure` over HTTPS), JSON-only writes, argon2id PIN hashes, hash-chained audit log (`verifyAuditChain`). Check-ins, walk-ins, dispatches, orders, payments, drawer open/close and device pairing are all audited.

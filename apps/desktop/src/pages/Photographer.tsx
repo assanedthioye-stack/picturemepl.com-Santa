@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, useEvents, type CameraInfo, type Me, type PhotoDto, type SessionRow, type StorageInfo } from '../api';
 import { useT } from '../i18n';
 import { TopBar } from './StaffApp';
 
-export function Photographer({ me, onSignOut, onBack }: { me: Me; onSignOut(): void; onBack?: () => void }) {
+export function Photographer({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav?: React.ReactNode }) {
   const { t } = useT();
   const [camera, setCamera] = useState<CameraInfo | null>(null);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
@@ -11,6 +11,8 @@ export function Photographer({ me, onSignOut, onBack }: { me: Me; onSignOut(): v
   const [notice, setNotice] = useState<string | null>(null);
   const [shooting, setShooting] = useState(false);
   const [storage, setStorage] = useState<StorageInfo | null>(null);
+  const [incoming, setIncoming] = useState<SessionRow | null>(null);
+  const known = useRef<Set<string> | null>(null);
 
   const armed = sessions.find((s) => s.status === 'armed') ?? null;
 
@@ -18,6 +20,10 @@ export function Photographer({ me, onSignOut, onBack }: { me: Me; onSignOut(): v
     const [cams, list] = await Promise.all([api<CameraInfo[]>('GET', '/api/cameras'), api<SessionRow[]>('GET', '/api/sessions')]);
     setCamera(cams[0] ?? null);
     setSessions(list);
+    // A family the Host just sent: flash it (not on first load).
+    const fresh = list.find((s) => s.status === 'dispatched' && known.current && !known.current.has(s.id));
+    if (fresh) setIncoming(fresh);
+    known.current = new Set(list.map((s) => s.id));
     const current = list.find((s) => s.status === 'armed');
     setPhotos(current ? await api<PhotoDto[]>('GET', `/api/sessions/${current.id}/photos`) : []);
   }, []);
@@ -49,7 +55,7 @@ export function Photographer({ me, onSignOut, onBack }: { me: Me; onSignOut(): v
   return (
     <div className="flex h-full flex-col">
       <TopBar me={me} onSignOut={onSignOut}>
-        {onBack && <button onClick={onBack} className="text-sm text-slate-600 underline">{t('login.back')}</button>}
+        {nav}
         <StoragePill storage={storage} />
         <CameraPill camera={camera} />
       </TopBar>
@@ -61,13 +67,13 @@ export function Photographer({ me, onSignOut, onBack }: { me: Me; onSignOut(): v
           <ul className="flex flex-col gap-2">
             {sessions.map((s) => (
               <li key={s.id} className={`rounded-xl border p-3 ${s.status === 'armed' ? 'border-brand-500 bg-brand-50' : 'border-slate-200'}`}>
+                <p className="truncate text-lg font-semibold">{s.familyName ?? '—'}</p>
                 <div className="flex items-baseline justify-between">
                   <span className="font-mono text-2xl font-bold tracking-widest">{s.code}</span>
                   <span className="text-xs text-slate-500">{s.bookingCode} · {s.partySize} {t('sessions.party')}</span>
                 </div>
                 {s.status === 'armed' ? (
-                  <button onClick={() => act(() => api('POST', `/api/sessions/${s.id}/complete`))}
-                    className="mt-2 w-full rounded-lg bg-slate-900 py-2 font-semibold text-white">{t('sessions.complete')}</button>
+                  <p className="mt-2 text-center font-semibold text-brand-700">● {t('sessions.armed')}</p>
                 ) : (
                   <button disabled={!!armed} onClick={() => act(() => api('POST', `/api/sessions/${s.id}/arm`))}
                     className="mt-2 w-full rounded-lg bg-brand-600 py-2 font-semibold text-white disabled:opacity-30">{t('sessions.arm')}</button>
@@ -80,6 +86,24 @@ export function Photographer({ me, onSignOut, onBack }: { me: Me; onSignOut(): v
         </aside>
 
         <main className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4">
+          {incoming && !armed && (
+            <button onClick={() => setIncoming(null)} role="alert"
+              className="pop-in flex items-center gap-4 rounded-2xl border-2 border-brand-500 bg-brand-50 p-4 text-left">
+              <span className="text-sm font-semibold uppercase tracking-wide text-brand-700">{t('ph.new')}</span>
+              <span className="text-2xl font-bold">{incoming.familyName}</span>
+              <span className="font-mono text-2xl font-bold tracking-widest text-brand-700">{incoming.code}</span>
+            </button>
+          )}
+          {armed && (
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl bg-slate-900 p-4 text-white">
+              <span className="text-sm uppercase tracking-wide text-white/60">{t('ph.active')}</span>
+              <span className="text-2xl font-bold">{armed.familyName ?? '—'}</span>
+              <span className="font-mono text-2xl font-bold tracking-widest text-gold-400">{armed.code}</span>
+              <span className="text-xl"><b>{photos.length}</b> {t('ph.photos')}</span>
+              <button onClick={() => act(() => api('POST', `/api/sessions/${armed.id}/complete`))}
+                className="ml-auto rounded-xl bg-brand-600 px-5 py-3 font-bold">{t('ph.finish')} →</button>
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-4">
             {camera?.canRemoteShutter ? (
               <button onClick={shoot} disabled={!armed || !camera.connected || shooting}

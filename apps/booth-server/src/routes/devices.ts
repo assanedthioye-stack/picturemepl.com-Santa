@@ -72,6 +72,7 @@ export function deviceRoutes(deps: Deps): Router {
       const photo = tx.select().from(schema.photos).where(eq(schema.photos.id, body.photoId)).get();
       if (!photo || photo.bookingId !== item.order.bookingId) throw new HttpError(404, 'photo_not_in_order');
       if (item.item.photoId && item.item.photoId !== photo.id) throw new HttpError(409, 'photo_mismatch');
+      if (item.item.printSize && item.item.printSize !== body.size) throw new HttpError(409, 'size_mismatch');
       if (copiesUsed(tx as never, item.item.id) + body.copies > item.item.qty) throw new HttpError(409, 'copies_exceed_paid_qty');
       return writeSynced(tx, schema.printJobs, {
         id: uuidv7(), boothId, orderItemId: item.item.id, photoId: photo.id, printSize: body.size,

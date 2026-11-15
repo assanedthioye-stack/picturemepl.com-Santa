@@ -13,6 +13,7 @@ export const PERMISSIONS = {
   'drawer.reconcile': ['admin', 'supervisor'],
   'refund.approve': ['admin', 'supervisor'],
   'queue.override': ['admin', 'supervisor'],
+  'devices.manage': ['admin', 'supervisor'],
   'session.dispatch': ['admin', 'supervisor', 'host'],
   'session.shoot': ['admin', 'supervisor', 'photographer'],
   'camera.view': ['admin', 'supervisor', 'photographer'],

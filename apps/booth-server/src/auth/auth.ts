@@ -85,8 +85,8 @@ export function safeEqual(a: string, b: string): boolean {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
-export function cookie(name: string, value: string, maxAgeSec: number): string {
-  return `${name}=${encodeURIComponent(value)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAgeSec}`;
+export function cookie(name: string, value: string, maxAgeSec: number, o: { secure?: boolean; sameSite?: 'Strict' | 'Lax' } = {}): string {
+  return `${name}=${encodeURIComponent(value)}; HttpOnly; SameSite=${o.sameSite ?? 'Strict'}; Path=/; Max-Age=${maxAgeSec}${o.secure ? '; Secure' : ''}`;
 }
 export const SESSION_SEC = SESSION_MS / 1000;
 

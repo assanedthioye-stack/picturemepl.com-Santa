@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { can, validateSecret, PRINT_ROUTES } from './index';
+import { can, extractBookingCode, normalizePhone, validateSecret, PRINT_ROUTES } from './index';
 import fr from './i18n/fr.json';
 import en from './i18n/en.json';
 
@@ -35,5 +35,23 @@ describe('print routes', () => {
 describe('i18n', () => {
   it('fr and en have the same keys', () => {
     expect(Object.keys(en).sort()).toEqual(Object.keys(fr).sort());
+  });
+});
+
+describe('phones and codes', () => {
+  it('normalizes SN/BJ/CI numbers to E.164', () => {
+    expect(normalizePhone('SN', '77 123 45 67')).toBe('+221771234567');
+    expect(normalizePhone('SN', '+221 77 123 45 67')).toBe('+221771234567');
+    expect(normalizePhone('SN', '0022177123456')).toBeNull(); // one digit short
+    expect(normalizePhone('BJ', '01 97 12 34 56')).toBe('+2290197123456');
+    expect(normalizePhone('CI', '07 07 12 34 56')).toBe('+2250707123456');
+    expect(normalizePhone('CI', '07071234')).toBeNull();
+    expect(normalizePhone('SN', '77abc4567')).toBeNull();
+  });
+  it('extracts the booking code from scans', () => {
+    expect(extractBookingCode('482913')).toBe('482913');
+    expect(extractBookingCode('https://picturemeplease.app/b/xyz?code=482913')).toBe('482913');
+    expect(extractBookingCode('1234567')).toBeNull();
+    expect(extractBookingCode('12345')).toBeNull();
   });
 });

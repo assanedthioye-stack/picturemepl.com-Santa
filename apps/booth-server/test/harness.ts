@@ -13,15 +13,15 @@ export const KIOSK_TOKEN = 'k'.repeat(48);
 
 export interface Printed { pdf: Buffer; o: PrintOptions }
 
-export async function makeBooth(env: (root: string) => Record<string, string> = () => ({})) {
+export async function makeBooth(env: (root: string) => Record<string, string> = () => ({}), opts: { lanIps?: string[] } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'pmp-'));
   const printed: Printed[] = [];
   const spooler: Spooler = {
     listPrinters: async () => ['Microsoft Print to PDF', 'DNP DS620A', 'Canon PIXMA TS8320'],
     print: async (pdf, o) => { printed.push({ pdf: readFileSync(pdf), o }); },
   };
-  const config = loadConfig({ PMP_ROOT: root, PMP_KIOSK_TOKEN: KIOSK_TOKEN, PMP_CAMERA_DRIVER: 'mock', ...env(root) });
-  const booth: Booth = await startBooth(config, { spooler });
+  const config = loadConfig({ PMP_ROOT: root, PMP_KIOSK_TOKEN: KIOSK_TOKEN, PMP_CAMERA_DRIVER: 'mock', PMP_LAN: '0', ...env(root) });
+  const booth: Booth = await startBooth(config, { spooler, ...opts });
   const server = booth.app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
