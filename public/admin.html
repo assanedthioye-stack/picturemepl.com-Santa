@@ -19,26 +19,26 @@ let MALLS = [], PRICES = [];
 const mallId = () => $('#mallsel').value;
 const country = () => MALLS.find((m) => String(m.id) === mallId())?.country;
 async function showPrices() { // the official price list is pre-loaded per country; inputs only matter if a price changes
-  PRICES = await (await fetch('/api/prices')).json();
+  PRICES = await pub('GET', '/api/prices');
   const c = country();
   $('#prices').innerHTML = ITEMS.map((i) => `<div class="item"><span>${t(i)}</span><span><input data-item="${i}" type="number" min="0" step="100" style="width:130px" value="${PRICES.find((p) => p.country === c && p.item === i)?.amount ?? ''}"> F</span></div>`).join('');
 }
 async function malls(keep) {
-  const m = MALLS = await (await fetch('/api/malls')).json();
+  const m = MALLS = await pub('GET', '/api/malls');
   $('#mallsel').innerHTML = m.map((x) => `<option value="${x.id}">${esc(x.name)} (${x.country})</option>`).join('');
   if (keep) $('#mallsel').value = keep; sales(); showPrices();
 }
 $('#mk').onclick = async () => {
   try { const r = await api('POST', '/api/admin/slots/bulk', { mall: mallId(), fromDay: $('#from').value, toDay: $('#to').value, open: $('#open').value, close: $('#close').value, minutes: $('#len').value, capacity: $('#cap').value });
     $('#smsg').textContent = `${r.created} ${t('slots_done')}`; $('#smsg').className = 'good'; }
-  catch (e) { $('#smsg').textContent = errText(e.message === 'bad slots' ? 'bad_slots' : e.message); $('#smsg').className = 'err'; }
+  catch (e) { $('#smsg').textContent = errText(e.message); $('#smsg').className = 'err'; }
 };
-$('#addmall').onclick = async () => { try { await api('POST', '/api/admin/malls', { name: $('#mname').value, country: $('#mcountry').value }); $('#mmsg').textContent = 'OK'; $('#mname').value = ''; malls(mallId()); } catch (e) { $('#mmsg').textContent = errText(e.message === 'bad mall' ? 'bad_mall' : e.message); } };
+$('#addmall').onclick = async () => { try { await api('POST', '/api/admin/malls', { name: $('#mname').value, country: $('#mcountry').value }); $('#mmsg').textContent = 'OK'; $('#mname').value = ''; malls(mallId()); } catch (e) { $('#mmsg').textContent = errText(e.message); } };
 $('#prices').addEventListener('change', async (e) => {
   try { await api('PUT', '/api/admin/prices', { country: country(), item: e.target.dataset.item, amount: +e.target.value }); $('#pmsg').textContent = t(e.target.dataset.item) + ' ✓'; $('#pmsg').className = 'good'; }
   catch (err) { $('#pmsg').textContent = errText(err.message); $('#pmsg').className = 'err'; }
 });
 async function sales() { if (!mallId()) return; try { const s = await api('GET', `/api/admin/sales?mall=${mallId()}&day=${$('#sd').value}`);
-  $('#sales').innerHTML = `<div class="tot">${xof(s.total)}</div>` + Object.entries({ ...s.byMethod, ...s.byProvider }).map(([k, v]) => `<div class="item"><span>${I.fr[k] || k}</span><span>${xof(v)}</span></div>`).join(''); } catch (e) {} }
-$('#sd').onchange = sales; $('#mallsel').onchange = () => { sales(); showPrices(); }; window.render = sales; applyI18n(); malls(); setInterval(sales, 10000);
+  $('#sales').innerHTML = `<div class="tot">${xof(s.total)}</div>` + Object.entries({ ...s.byMethod, ...s.byProvider }).map(([k, v]) => `<div class="item"><span>${esc(t(k))}</span><span>${xof(v)}</span></div>`).join(''); } catch (e) { $('#sales').textContent = errText(e.message); } }
+$('#sd').onchange = sales; $('#mallsel').onchange = () => { sales(); showPrices(); }; window.render = sales; applyI18n(); malls().catch((e) => { $('#smsg').textContent = errText(e.message); }); setInterval(sales, 10000);
 </script></body></html>

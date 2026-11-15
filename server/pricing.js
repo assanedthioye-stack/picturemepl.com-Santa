@@ -8,8 +8,8 @@ const PRINTS = ['print_8x10', 'print_5x7', 'print_4x6', 'wallet'];
 const off = (n) => Math.round(n * 0.8);
 
 function priceOrder(country, items, prices) {
-  for (const { item, qty } of items) {
-    if (!Object.hasOwn(prices, item) || !Number.isInteger(qty) || qty < 1) throw new Error('bad item: ' + item);
+  for (const it of items) {
+    if (!it || typeof it.item !== 'string' || !Object.hasOwn(prices, it.item) || !Number.isInteger(it.qty) || it.qty < 1 || it.qty > 20) throw new Error('bad item');
   }
   // Expand packages into single units, highest price first: first is full, the rest 20% off.
   const units = [];

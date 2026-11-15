@@ -53,7 +53,7 @@ test('trend fills every day of the range with zeros', () => {
 test('peak hours count arrivals by local hour (Benin is UTC+1)', () => {
   const db = seed();
   db.prepare("INSERT INTO malls(id,name,country) VALUES(3,'Cotonou','BJ')").run();
-  require('../server/queue').addWalkIn(db, 3, { name: 'z', phone: '1', consent: true }, T(0));
+  require('../server/queue').addWalkIn(db, 3, { name: 'z', phone: '+221700000000', consent: true }, T(0));
   assert.equal(dashboard(db, { ...R, country: 'SN' }).peakHours[10], 2);
   assert.equal(dashboard(db, { ...R, country: 'BJ' }).peakHours[11], 1);
   assert.equal(dashboard(db, { ...R, country: '' }).peakHours[10], 3);

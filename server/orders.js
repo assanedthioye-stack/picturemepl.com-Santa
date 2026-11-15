@@ -1,12 +1,14 @@
 const { priceOrder } = require('./pricing');
-const { priceMap } = require('./db');
+const { priceMap, tx } = require('./db');
 const { gallery } = require('./photos');
+const { cleanText } = require('./booking');
 
 const PROVIDERS = { SN: ['Orange Money', 'Wave'], CI: ['Orange Money', 'Wave'], BJ: ['MTN MoMo', 'Celtiis Cash'] };
+const DIGITAL = ['digital', 'essentiel', 'famille', 'prestige', 'numerique']; // items that include a digital file
 const DAY = 86400000;
 
 const countryOf = (db, code) =>
-  db.prepare('SELECT m.country FROM queue q JOIN malls m ON m.id=q.mall_id WHERE q.code=?').get(code)?.country;
+  db.prepare('SELECT m.country FROM queue q JOIN malls m ON m.id=q.mall_id WHERE q.code=?').get(String(code || ''))?.country;
 
 function price(db, code, items) {
   const country = countryOf(db, code);
@@ -14,41 +16,57 @@ function price(db, code, items) {
   return priceOrder(country, items, priceMap(db, country));
 }
 
-function saveCart(db, code, items, photoFiles) {
-  const have = gallery(db, code) || [];
-  if (photoFiles.some((f) => !have.includes(f))) throw new Error('photo not in gallery');
-  const o = db.prepare('SELECT paid_at FROM orders WHERE code=?').get(code);
-  if (o?.paid_at) throw new Error('already paid');
-  if (!items.length) { // emptied cart: forget it so a stale one cannot be charged
-    db.prepare('DELETE FROM orders WHERE code=?').run(code);
-    return { lines: [], total: 0 };
-  }
-  const { lines, total } = price(db, code, items);
-  db.prepare(`INSERT INTO orders(code,items_json,files_json,lines_json,total) VALUES(?,?,?,?,?)
-    ON CONFLICT(code) DO UPDATE SET items_json=excluded.items_json, files_json=excluded.files_json, lines_json=excluded.lines_json, total=excluded.total`)
-    .run(code, JSON.stringify(items), JSON.stringify(photoFiles), JSON.stringify(lines), total);
-  return { lines, total };
+function saveCart(db, code, items, photoFiles = []) {
+  if (!Array.isArray(items) || !Array.isArray(photoFiles) || items.length > 20) throw new Error('bad item: cart');
+  return tx(db, () => {
+    const have = gallery(db, code);
+    if (!have) throw new Error('unknown code');
+    if (photoFiles.some((f) => !have.includes(f))) throw new Error('photo not in gallery');
+    if (db.prepare('SELECT paid_at FROM orders WHERE code=?').get(code)?.paid_at) throw new Error('already paid');
+    if (!items.length) { // emptied cart: forget it so a stale one cannot be charged
+      db.prepare('DELETE FROM orders WHERE code=?').run(code);
+      return { lines: [], total: 0 };
+    }
+    const { lines, total } = price(db, code, items);
+    db.prepare(`INSERT INTO orders(code,items_json,files_json,lines_json,total) VALUES(?,?,?,?,?)
+      ON CONFLICT(code) DO UPDATE SET items_json=excluded.items_json, files_json=excluded.files_json, lines_json=excluded.lines_json, total=excluded.total`)
+      .run(code, JSON.stringify(items), JSON.stringify([...new Set(photoFiles)]), JSON.stringify(lines), total);
+    return { lines, total };
+  });
 }
 
-function pay(db, code, p, now = new Date()) {
-  const o = db.prepare('SELECT * FROM orders WHERE code=?').get(code);
-  if (!o) throw new Error('no cart');
-  if (o.paid_at) throw new Error('already paid');
-  const { lines, total } = price(db, code, JSON.parse(o.items_json)); // never trust a client total
-  if (p.expectedTotal !== total) throw new Error('total changed'); // cart changed after the cashier looked
-  const bad = () => new Error('invalid payment');
-  if (!p.cashier) throw bad();
-  if (p.method === 'cash') {
-    if (!(p.amountReceived >= total)) throw bad();
-  } else if (p.method === 'mobile_money') {
-    if (!PROVIDERS[countryOf(db, code)].includes(p.provider) || !String(p.reference || '').trim()) throw bad();
-  } else throw bad();
-  db.prepare(`UPDATE orders SET lines_json=?, total=?, method=?, provider=?, reference=?, amount_received=?, paid_at=?, cashier=?,
-    print_state='ready', download_expires_at=? WHERE code=?`)
-    .run(JSON.stringify(lines), total, p.method, p.provider || null, p.reference || null,
-      p.method === 'cash' ? p.amountReceived : total, now.toISOString(), p.cashier,
-      new Date(+now + 30 * DAY).toISOString(), code);
-  return { total };
+function pay(db, code, /** @type {any} */ p, now = new Date()) {
+  p = p || {};
+  return tx(db, () => {
+    const o = db.prepare('SELECT * FROM orders WHERE code=?').get(String(code || ''));
+    if (!o) throw new Error('no cart');
+    if (o.paid_at) throw new Error('already paid');
+    if (!JSON.parse(o.files_json).length) throw new Error('no photos'); // nothing would print or download
+    const { lines, total } = price(db, code, JSON.parse(o.items_json)); // never trust a client total
+    if (p.expectedTotal !== total) throw new Error('total changed'); // cart changed after the cashier looked
+    const bad = () => new Error('invalid payment');
+    const cashier = cleanText(p.cashier, 40), reference = cleanText(p.reference, 60);
+    if (!cashier) throw bad();
+    if (p.method === 'cash') {
+      if (!Number.isSafeInteger(p.amountReceived) || p.amountReceived < total) throw bad();
+    } else if (p.method === 'mobile_money') {
+      if (!PROVIDERS[countryOf(db, code)].includes(p.provider) || !reference) throw bad();
+    } else throw bad();
+    const momo = p.method === 'mobile_money';
+    db.prepare(`UPDATE orders SET lines_json=?, total=?, method=?, provider=?, reference=?, amount_received=?, paid_at=?, cashier=?,
+      print_state='ready', download_expires_at=? WHERE code=?`)
+      .run(JSON.stringify(lines), total, p.method, momo ? p.provider : null, momo ? reference : null,
+        momo ? total : p.amountReceived, now.toISOString(), cashier, new Date(+now + 30 * DAY).toISOString(), o.code);
+    return { total };
+  });
+}
+
+function getOrder(db, code, now = new Date()) {
+  const o = db.prepare('SELECT * FROM orders WHERE code=?').get(String(code || ''));
+  const country = countryOf(db, code);
+  if (!o || !country) throw new Error('unknown code');
+  return { lines: JSON.parse(o.lines_json), total: o.total, photos: JSON.parse(o.files_json).length, paid: !!o.paid_at, method: o.method,
+    provider: o.provider, print_state: o.print_state, country, downloads: o.paid_at ? download(db, code, now) : null };
 }
 
 function nextPrintJob(db, mallId) {
@@ -58,14 +76,14 @@ function nextPrintJob(db, mallId) {
 }
 
 function markPrinted(db, code) {
-  db.prepare("UPDATE orders SET print_state='printed' WHERE code=?").run(code);
+  const r = db.prepare("UPDATE orders SET print_state='printed' WHERE code=? AND print_state='ready'").run(String(code || ''));
+  if (!r.changes) throw new Error('unknown code');
 }
 
 function download(db, code, now = new Date()) {
-  const o = db.prepare('SELECT * FROM orders WHERE code=? AND paid_at IS NOT NULL').get(code);
+  const o = db.prepare('SELECT * FROM orders WHERE code=? AND paid_at IS NOT NULL').get(String(code || ''));
   if (!o || now >= new Date(o.download_expires_at)) return null;
-  const items = JSON.parse(o.items_json);
-  const hasDigital = items.some((i) => i.item === 'digital' || ['essentiel', 'famille', 'prestige', 'numerique'].includes(i.item));
+  const hasDigital = JSON.parse(o.items_json).some((i) => DIGITAL.includes(i.item));
   return hasDigital ? JSON.parse(o.files_json) : null; // print-only orders get no files
 }
-module.exports = { saveCart, pay, nextPrintJob, markPrinted, download, PROVIDERS };
+module.exports = { saveCart, pay, getOrder, nextPrintJob, markPrinted, download, PROVIDERS };

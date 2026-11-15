@@ -8,6 +8,7 @@ const PRICES = {
 
 function openDb(path = ':memory:') {
   const db = new DatabaseSync(path);
+  db.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;');
   db.exec(`
     CREATE TABLE IF NOT EXISTS malls(id INTEGER PRIMARY KEY, name TEXT, country TEXT);
     CREATE TABLE IF NOT EXISTS slots(id INTEGER PRIMARY KEY, mall_id INTEGER, start_at TEXT, capacity INTEGER);
@@ -17,7 +18,13 @@ function openDb(path = ':memory:') {
     CREATE TABLE IF NOT EXISTS orders(id INTEGER PRIMARY KEY, code TEXT UNIQUE, items_json TEXT, files_json TEXT, lines_json TEXT, total INTEGER, method TEXT, provider TEXT, reference TEXT, amount_received INTEGER, paid_at TEXT, cashier TEXT, print_state TEXT DEFAULT 'none', download_expires_at TEXT);
     CREATE TABLE IF NOT EXISTS prices(country TEXT, item TEXT, amount INTEGER, PRIMARY KEY(country,item));
   `);
-  try { db.exec('ALTER TABLE queue ADD COLUMN served_at TEXT'); } catch {} // existing databases
+  try { db.exec('ALTER TABLE queue ADD COLUMN served_at TEXT'); } catch { /* column already there */ }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS i_slots_mall ON slots(mall_id, start_at);
+    CREATE INDEX IF NOT EXISTS i_bookings_slot ON bookings(slot_id);
+    CREATE INDEX IF NOT EXISTS i_queue_mall ON queue(mall_id, state);
+    CREATE INDEX IF NOT EXISTS i_photos_code ON photos(code);
+  `);
   const ins = db.prepare('INSERT OR IGNORE INTO prices(country,item,amount) VALUES(?,?,?)');
   for (const [c, m] of Object.entries(PRICES)) {
     for (const [k, v] of Object.entries(m)) ins.run(c, k, v);
@@ -26,9 +33,28 @@ function openDb(path = ':memory:') {
   return db;
 }
 
+// Runs fn atomically: all of its writes land, or none do.
+function tx(db, fn) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const out = fn();
+    db.exec('COMMIT');
+    return out;
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+}
+
 function priceMap(db, country) {
   const m = {};
   for (const r of db.prepare('SELECT item, amount FROM prices WHERE country=?').all(country)) m[r.item] = r.amount;
   return m;
 }
-module.exports = { openDb, priceMap };
+
+function mallById(db, id) {
+  const m = Number.isInteger(id) ? db.prepare('SELECT id,name,country FROM malls WHERE id=?').get(id) : null;
+  if (!m) throw new Error('unknown mall');
+  return m;
+}
+module.exports = { openDb, tx, priceMap, mallById };

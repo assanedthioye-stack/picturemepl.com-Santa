@@ -6,10 +6,10 @@ const os = require('node:os');
 const path = require('node:path');
 
 // The hosting platform loads the entry file itself and expects it to call listen() with no "run directly" guard.
-test('server/main.js starts listening on PORT and serves the booking page', async () => {
+for (const entry of ['index.js', 'main.js']) test(`server/${entry} starts listening on PORT and serves the booking page`, async () => {
   const port = 34000 + Math.floor(Math.random() * 1000);
-  const child = spawn(process.execPath, [path.join(__dirname, '../server/main.js')], {
-    env: { ...process.env, PORT: String(port), PINS: '{"admin":"1"}', DATA_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')) },
+  const child = spawn(process.execPath, [path.join(__dirname, '../server', entry)], {
+    env: { ...process.env, PORT: String(port), PINS: '{"host":"1111","photographer":"2222","cashier":"3333","monitor":"4444","admin":"9999"}', DATA_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')) },
   });
   try {
     let res;

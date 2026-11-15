@@ -1,31 +1,47 @@
 <!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Picture Me Please</title><link rel="stylesheet" href="/style.css"></head><body><main>
-<div class="top"><h1>Host</h1><button class="alt" onclick="toggleLang()" data-t="lang"></button></div>
-<div class="card"><input id="code" data-tp="code" autocapitalize="characters"><button id="ci" data-t="check_in"></button> <button class="alt" id="scan" data-t="scan"></button><video id="v" playsinline hidden style="width:100%"></video><p id="msg"></p></div>
-<div class="card"><h2 data-t="walkin"></h2><input id="wn" data-tp="name"><input id="wp" data-tp="phone" type="tel"><label class="row"><input type="checkbox" id="wc"><span data-t="consent"></span></label><button id="wa" data-t="add"></button><p id="wmsg"></p></div>
+<div class="top"><h1>Accueil</h1><button class="alt" onclick="toggleLang()" data-t="lang"></button></div>
+<div class="card"><input id="code" data-tp="code" autocapitalize="characters" maxlength="8"><button id="ci" data-t="check_in"></button> <button class="alt" id="scan" data-t="scan"></button><video id="v" playsinline hidden style="width:100%"></video><p id="msg"></p></div>
+<div class="card"><h2 data-t="walkin"></h2><input id="wn" data-tp="name" maxlength="80"><input id="wp" data-tp="phone" type="tel" maxlength="20"><label class="row"><input type="checkbox" id="wc"><span data-t="consent"></span></label><button id="wa" data-t="add"></button><p id="wmsg"></p></div>
 <div class="card"><div class="top"><h2 data-t="queue"></h2><button id="next" data-t="next"></button></div><div id="q"></div></div>
 </main><script src="/app.js"></script><script>
 const say = (id, m, bad) => { const e = $(id); e.textContent = m; e.className = bad ? 'err' : 'good'; };
-async function checkIn(code) { try { const r = await api('POST', '/api/checkin', { code: code.trim().toUpperCase() }); say('#msg', `${t(r.kind === 'walkin' ? 'walkin_k' : 'appointment')} · #${r.position}`); refresh(); } catch (e) { say('#msg', errText(e.message), 1); } }
+async function checkIn(code) {
+  try { const r = await api('POST', '/api/checkin', { code: code.trim().toUpperCase(), mall });
+    say('#msg', `${t(r.kind === 'walkin' ? 'walkin_k' : 'appointment')} · #${r.position}`); $('#code').value = ''; refresh(); }
+  catch (e) { say('#msg', errText(e.message), 1); }
+}
 $('#ci').onclick = () => checkIn($('#code').value);
-$('#wa').onclick = async () => { try { const r = await api('POST', '/api/walkin', { mall, name: $('#wn').value, phone: $('#wp').value, consent: $('#wc').checked }); say('#wmsg', r.code); refresh(); } catch (e) { say('#wmsg', errText(e.message), 1); } };
+$('#wa').onclick = async () => {
+  try { const r = await api('POST', '/api/walkin', { mall, name: $('#wn').value, phone: $('#wp').value, consent: $('#wc').checked });
+    say('#wmsg', r.code); $('#wn').value = $('#wp').value = ''; $('#wc').checked = false; refresh(); }
+  catch (e) { say('#wmsg', errText(e.message), 1); }
+};
 $('#next').onclick = async () => {
-  try { await api('POST', '/api/next', { mall }); refresh(); }
-  catch (e) {
-    if (e.message === 'unpaid order' && confirm(t('unpaid_confirm'))) { await api('POST', '/api/next', { mall, force: true }); refresh(); }
-    else say('#msg', errText(e.message), 1);
-  }
+  try {
+    try { await api('POST', '/api/next', { mall }); }
+    catch (e) { if (e.message !== 'unpaid order' || !confirm(t('unpaid_confirm'))) throw e; await api('POST', '/api/next', { mall, force: true }); }
+    say('#msg', '', 0); refresh();
+  } catch (e) { say('#msg', errText(e.message), 1); }
 };
 $('#scan').onclick = async () => {
-  if (!('BarcodeDetector' in window)) return say('#msg', 'Saisir le code à la main', 1);
-  const v = $('#v'); v.hidden = false; v.srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); await v.play();
-  const d = new BarcodeDetector({ formats: ['qr_code'] });
-  const loop = async () => { const r = await d.detect(v); if (r[0]) { v.srcObject.getTracks().forEach((x) => x.stop()); v.hidden = true; $('#code').value = r[0].rawValue; checkIn(r[0].rawValue); } else requestAnimationFrame(loop); };
-  loop();
+  const v = $('#v');
+  const stop = () => { if (v.srcObject) v.srcObject.getTracks().forEach((x) => x.stop()); v.srcObject = null; v.hidden = true; };
+  try {
+    if (!('BarcodeDetector' in window)) throw new Error('no detector');
+    v.srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); v.hidden = false; await v.play();
+    const d = new BarcodeDetector({ formats: ['qr_code'] });
+    const loop = async () => {
+      try { if (!v.srcObject) return; const r = await d.detect(v); if (r[0]) { stop(); checkIn(r[0].rawValue); } else requestAnimationFrame(loop); }
+      catch (e) { stop(); say('#msg', t('no_camera'), 1); }
+    };
+    loop();
+  } catch (e) { stop(); say('#msg', t('no_camera'), 1); }
 };
 async function refresh() {
   try { const q = await api('GET', '/api/queue?mall=' + mall);
-    $('#q').innerHTML = q.length ? q.map((x) => `<div class="q ${x.state}"><span>${esc(x.name)} <small class="mono">${esc(x.code)}</small></span><span>${x.state === 'serving' ? t('serving') : t(x.kind === 'walkin' ? 'walkin_k' : 'appointment')}</span></div>`).join('') : `<p>${t('empty')}</p>`;
-  } catch (e) {}
+    $('#q').innerHTML = q.length ? q.map((x) => `<div class="q ${x.state === 'serving' ? 'serving' : ''}"><span>${esc(x.name)} <small class="mono">${esc(x.code)}</small></span><span>${x.state === 'serving' ? t('serving') : t(x.kind === 'walkin' ? 'walkin_k' : 'appointment')}</span></div>`).join('') : `<p>${t('empty')}</p>`;
+  } catch (e) { $('#q').textContent = errText(e.message); }
 }
-window.render = refresh; applyI18n(); refresh(); setInterval(refresh, 4000);
+window.render = refresh; applyI18n();
+initMall().then(() => { refresh(); setInterval(refresh, 4000); }).catch((e) => say('#msg', errText(e.message), 1));
 </script></body></html>

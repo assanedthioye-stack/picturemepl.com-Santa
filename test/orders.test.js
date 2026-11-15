@@ -7,14 +7,13 @@ const { openDb } = require('../server/db');
 const { addWalkIn, serveNext } = require('../server/queue');
 const { ingest } = require('../server/photos');
 const { saveCart, pay, nextPrintJob, markPrinted, download } = require('../server/orders');
-const { priceOrder } = require('../server/pricing');
 
 const DAY = 86400000;
 function setup(country = 'SN') {
   const db = openDb();
   db.prepare("INSERT INTO malls(id,name,country) VALUES(1,'M',?)").run(country);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-'));
-  const code = addWalkIn(db, 1, { name: 'A', phone: '1', consent: true }).code;
+  const code = addWalkIn(db, 1, { name: 'A', phone: '+221700000000', consent: true }).code;
   serveNext(db, 1);
   ingest(db, dir, 1, 'a.jpg', Buffer.from('x'));
   const file = db.prepare('SELECT file FROM photos').get().file;

@@ -2,47 +2,57 @@
 <div class="top"><h1 id="who"></h1><button class="alt" onclick="toggleLang()" data-t="lang"></button></div>
 <div id="work" hidden>
 <p data-t="pick"></p><div class="thumbs" id="th"></div>
-<div class="card"><h2 data-t="packages"></h2><div id="pk"></div><h2 data-t="extras"></h2><div id="ex"></div></div>
-<div class="card"><div id="lines"></div><div class="tot" id="tot"></div><p><span data-t="pay_at"></span><div class="code" id="code"></div></p></div>
+<div id="shop"><div class="card"><h2 data-t="packages"></h2><div id="pk"></div><h2 data-t="extras"></h2><div id="ex"></div></div></div>
+<div class="card"><div id="lines"></div><div class="tot" id="tot"></div><p class="good" id="paid" hidden data-t="paid"></p><p data-t="pay_at"></p><div class="code" id="code"></div></div>
 </div>
 <div class="card" id="dlbox" hidden><b data-t="dl"></b><div id="dl"></div></div>
 <p id="wait" class="big" data-t="waiting_family"></p>
 </main><script src="/app.js"></script><script>
 const PK = ['essentiel', 'famille', 'prestige', 'numerique'], EX = ['print_8x10', 'print_5x7', 'print_4x6', 'wallet', 'digital'];
-let code = null, files = [], sel = new Set(), qty = {}, country = 'SN', prices = {};
+let code = null, files = [], sel = new Set(), qty = {}, country = 'SN', prices = {}, paid = false, seq = 0, urls = [];
 const unit = (i) => prices[country + i] || 0;
-function stepper(i) { return `<div class="item"><span>${t(i)} <small>${xof(unit(i))}</small></span><span class="n"><button class="alt" onclick="step('${i}',-1)">−</button><b>${qty[i] || 0}</b><button onclick="step('${i}',1)">+</button></span></div>`; }
-async function step(i, d) { qty[i] = Math.max(0, (qty[i] || 0) + d); await cart(); }
+const stepper = (i) => `<div class="item"><span>${t(i)} <small>${xof(unit(i))}</small></span><span class="n"><button class="alt" data-step="-1" data-item="${i}">−</button><b>${qty[i] || 0}</b><button data-step="1" data-item="${i}">+</button></span></div>`;
+function lines(o) {
+  $('#lines').innerHTML = o.lines.map((l) => `<div class="item"><span>${l.qty}× ${t(l.item)} ${l.discounted ? '<b class="good">' + t('discount') + '</b>' : ''}</span><span>${xof(l.amount)}</span></div>`).join('');
+  $('#tot').textContent = o.lines.length ? t('total') + ' ' + xof(o.total) : '';
+}
 async function cart() {
+  if (paid || !code) return;
   $('#pk').innerHTML = PK.map(stepper).join(''); $('#ex').innerHTML = EX.map(stepper).join('');
   const items = Object.entries(qty).filter(([, q]) => q > 0).map(([item, q]) => ({ item, qty: q }));
-  try { const r = await api('POST', '/api/cart', { code, items, files: [...sel] }); // empty cart too, so a stale one is dropped
-    if (!items.length) { $('#lines').innerHTML = ''; $('#tot').textContent = ''; return; }
-    $('#lines').innerHTML = r.lines.map((l) => `<div class="item"><span>${l.qty}× ${t(l.item)} ${l.discounted ? '<b class="good">' + t('discount') + '</b>' : ''}</span><span>${xof(l.amount)}</span></div>`).join('');
-    $('#tot').textContent = t('total') + ' ' + xof(r.total);
-  } catch (e) { $('#tot').textContent = errText(e.message); }
+  const mine = ++seq; // only the latest request may update the screen: slow earlier answers are stale
+  try { const r = await api('POST', '/api/cart', { code, items, files: [...sel] }); if (mine === seq) lines(r); }
+  catch (e) { if (mine === seq) $('#tot').textContent = errText(e.message); }
 }
-function thumbs() {
+$('#shop').onclick = (e) => { const b = e.target.closest('button[data-item]'); if (!b || paid) return; const i = b.dataset.item; qty[i] = Math.min(20, Math.max(0, (qty[i] || 0) + +b.dataset.step)); cart(); };
+async function thumbs() {
+  const forCode = code, list = files.slice();
+  const made = await Promise.all(list.map((f) => photoSrc(forCode, f).catch(() => '')));
+  if (forCode !== code) { made.forEach((u) => u && URL.revokeObjectURL(u)); return; }
+  urls.forEach((u) => u && URL.revokeObjectURL(u)); urls = made;
   $('#th').innerHTML = '';
-  for (const f of files) { const im = document.createElement('img'); im.src = `/photo/${code}/${f}?pin=${getPin()}`; im.className = sel.has(f) ? 'on' : '';
-    im.onclick = () => { sel.has(f) ? sel.delete(f) : sel.add(f); im.className = sel.has(f) ? 'on' : ''; cart(); }; $('#th').append(im); }
+  list.forEach((f, k) => { const im = document.createElement('img'); im.src = made[k]; im.alt = f; im.className = sel.has(f) ? 'on' : '';
+    im.onclick = () => { if (paid) return; sel.has(f) ? sel.delete(f) : sel.add(f); im.className = sel.has(f) ? 'on' : ''; cart(); }; $('#th').append(im); });
 }
 async function refresh() {
   try {
     const a = await api('GET', '/api/active?mall=' + mall);
-    if (!a) { code = null; $('#dlbox').hidden = true; $('#work').hidden = true; $('#wait').hidden = false; $('#who').textContent = ''; return; }
+    if (!a) { code = null; paid = false; $('#dlbox').hidden = true; $('#work').hidden = true; $('#wait').hidden = false; $('#who').textContent = ''; return; }
+    if (a.code !== code) { code = a.code; files = []; sel = new Set(); qty = {}; paid = false; $('#who').textContent = a.name; $('#code').textContent = code; $('#work').hidden = false; $('#wait').hidden = true; $('#lines').innerHTML = $('#tot').textContent = ''; cart(); }
     const g = await api('GET', '/api/gallery/' + a.code);
-    if (a.code !== code) { code = a.code; files = []; sel = new Set(); qty = {}; $('#who').textContent = a.name; $('#code').textContent = code; $('#work').hidden = false; $('#wait').hidden = true; cart(); }
-    if (g.length !== files.length) { files = g; thumbs(); }
+    if (a.code === code && g.length !== files.length) { files = g; thumbs(); }
     const o = await api('GET', '/api/order?code=' + code).catch(() => null);
-    $('#dlbox').hidden = !(o && o.paid && o.downloads);
-    if (o && o.downloads) $('#dl').innerHTML = o.downloads.map((f) => `<a href="/dl/${code}/${f}">${f}</a>`).join('<br>');
-  } catch (e) {}
+    paid = !!(o && o.paid);
+    $('#paid').hidden = !paid; $('#shop').hidden = paid;
+    if (paid) lines(o);
+    $('#dlbox').hidden = !(paid && o.downloads);
+    if (paid && o.downloads) $('#dl').innerHTML = o.downloads.map((f) => `<a href="/dl/${encodeURIComponent(code)}/${encodeURIComponent(f)}">${esc(f)}</a>`).join('<br>');
+  } catch (e) { /* shown on the next successful poll; a wrong PIN re-prompts */ }
 }
-(async () => {
-  const [malls, pr] = await Promise.all([fetch('/api/malls').then((r) => r.json()), fetch('/api/prices').then((r) => r.json())]);
-  country = malls.find((m) => String(m.id) === mall)?.country || 'SN';
-  for (const p of pr) prices[p.country + p.item] = p.amount;
-  window.render = () => { cart(); }; applyI18n(); refresh(); setInterval(refresh, 2000);
-})();
+window.render = cart; applyI18n();
+initMall().then(async (m) => {
+  country = m.country;
+  for (const p of await pub('GET', '/api/prices')) prices[p.country + p.item] = p.amount;
+  refresh(); setInterval(refresh, 2000);
+}).catch((e) => { $('#wait').textContent = errText(e.message); });
 </script></body></html>

@@ -5,9 +5,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { chromium } = require('playwright');
 const { openDb } = require('../server/db');
-const { createServer } = require('../server/index');
+const { createServer } = require('../server/app');
 
-const PINS = { host: 'h1', photographer: 'p1', cashier: 'c1', monitor: 'm1', admin: 'a1' };
+const PINS = { host: 'h111', photographer: 'p111', cashier: 'c111', monitor: 'm111', admin: 'a111' };
 
 test('family books, host checks in, photo, monitor picks Famille, cashier takes cash, print job appears', async () => {
   const db = openDb();
@@ -33,29 +33,29 @@ test('family books, host checks in, photo, monitor picks Famille, cashier takes 
     const code = await book.textContent('#code');
     if (process.env.SHOTS) await book.screenshot({ path: process.env.SHOTS + '/book.png' });
 
-    const host = await open('/host.html?mall=1', 'h1');
+    const host = await open('/host.html?mall=1', 'h111');
     await host.fill('#code', code); await host.click('#ci');
     await host.waitForSelector('#msg.good');
     await host.click('#next');
     await host.waitForSelector('.q.serving');
 
-    const up = await fetch(base + '/api/photos?mall=1&name=a.jpg', { method: 'POST', headers: { 'x-pin': 'p1' }, body: 'JPEG' });
+    const up = await fetch(base + '/api/photos?mall=1&name=a.jpg', { method: 'POST', headers: { 'x-pin': 'p111' }, body: 'JPEG' });
     assert.equal(up.status, 200);
 
-    const mon = await open('/monitor.html?mall=1', 'm1');
+    const mon = await open('/monitor.html?mall=1', 'm111');
     await mon.waitForSelector('.thumbs img');
     await mon.locator('.thumbs img').first().click();
     await mon.locator('#pk .item').nth(1).locator('button').last().click(); // Famille +
     await mon.waitForFunction(() => document.querySelector('#tot').textContent.includes('Total'));
     if (process.env.SHOTS) await mon.screenshot({ path: process.env.SHOTS + '/monitor.png' });
 
-    const cash = await open('/cashier.html?mall=1', 'c1');
+    const cash = await open('/cashier.html?mall=1', 'c111');
     await cash.waitForSelector('#o:not([hidden])');
-    await cash.fill('#recv', '10000');
+    await cash.fill('#who', 'Amy'); await cash.fill('#recv', '10000');
     await cash.click('#pay');
     await cash.waitForFunction(() => document.querySelector('#msg').textContent.includes('✓'));
 
-    const job = await (await fetch(base + '/api/print/next?mall=1', { headers: { 'x-pin': 'c1' } })).json();
+    const job = await (await fetch(base + '/api/print/next?mall=1', { headers: { 'x-pin': 'c111' } })).json();
     assert.equal(job.code, code);
   } finally { await browser.close(); srv.close(); }
 });
@@ -68,12 +68,12 @@ test('a parent name with HTML is shown as text on the host screen', async () => 
   await new Promise((r) => srv.listen(0, r));
   const base = 'http://localhost:' + srv.address().port;
   const post = (u, b, pin) => fetch(base + u, { method: 'POST', headers: { 'x-pin': pin || '' }, body: JSON.stringify(b) }).then((r) => r.json());
-  const { code } = await post('/api/book', { slotId: 1, name: '<img src=x onerror="window.__xss=1">', phone: '1', consent: true });
-  await post('/api/checkin', { code }, 'h1');
+  const { code } = await post('/api/book', { slotId: 1, name: '<img src=x onerror="window.__xss=1">', phone: '+221700000000', consent: true });
+  await post('/api/checkin', { code, mall: 1 }, 'h111');
   const browser = await chromium.launch();
   try {
     const p = await browser.newPage();
-    p.on('dialog', (d) => d.accept('h1'));
+    p.on('dialog', (d) => d.accept('h111'));
     await p.goto(base + '/host.html?mall=1');
     await p.waitForSelector('.q');
     assert.equal(await p.evaluate(() => window.__xss), undefined);
@@ -86,20 +86,21 @@ test('dashboard page shows KPIs from seeded sales', async () => {
   const { saveCart, pay } = require('../server/orders');
   const db = openDb();
   db.prepare("INSERT INTO malls(id,name,country) VALUES(1,'Sea Plaza','SN')").run();
-  const code = addWalkIn(db, 1, { name: 'A', phone: '1', consent: true }).code;
+  const code = addWalkIn(db, 1, { name: 'A', phone: '+221700000000', consent: true }).code;
   serveNext(db, 1);
-  saveCart(db, code, [{ item: 'famille', qty: 1 }], []);
+  db.prepare("INSERT INTO photos(code,file) VALUES(?,'1_a.jpg')").run(code);
+  saveCart(db, code, [{ item: 'famille', qty: 1 }], ['1_a.jpg']);
   pay(db, code, { method: 'cash', amountReceived: 10000, expectedTotal: 10000, cashier: 'amy' });
   const srv = createServer({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
   await new Promise((r) => srv.listen(0, r));
   const browser = await chromium.launch();
   try {
     const p = await browser.newPage({ viewport: { width: 390, height: 1200 } });
-    p.on('dialog', (d) => d.accept('a1'));
+    p.on('dialog', (d) => d.accept('a111'));
     await p.goto('http://localhost:' + srv.address().port + '/dashboard.html');
     await p.waitForSelector('.tile');
     const text = await p.textContent('#tiles');
-    assert.ok(/10\s?000/.test(text.replace(/ | /g, ' ')), text);
+    assert.ok(/10\s?000/.test(text.replace(/\s/g, ' ')), text);
     if (process.env.SHOTS) await p.screenshot({ path: process.env.SHOTS + '/dashboard.png', fullPage: true });
   } finally { await browser.close(); srv.close(); }
 });
@@ -112,7 +113,7 @@ test('dashboard draws trend charts and downloads the orders CSV', async () => {
   const browser = await chromium.launch();
   try {
     const p = await browser.newPage({ viewport: { width: 390, height: 1200 }, acceptDownloads: true });
-    p.on('dialog', (d) => d.accept('a1'));
+    p.on('dialog', (d) => d.accept('a111'));
     await p.goto('http://localhost:' + srv.address().port + '/dashboard.html');
     await p.fill('#from', '2026-12-18'); await p.fill('#to', '2026-12-22'); await p.dispatchEvent('#to', 'change');
     await p.waitForSelector('#trend svg polyline');
@@ -135,7 +136,7 @@ test('admin creates a whole day of slots from one simple form, and families can 
   const browser = await chromium.launch();
   try {
     const p = await browser.newPage({ viewport: { width: 390, height: 1100 } });
-    p.on('dialog', (d) => d.accept('a1'));
+    p.on('dialog', (d) => d.accept('a111'));
     await p.goto(base + '/admin.html');
     await p.selectOption('#mallsel', '1');
     const day = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
@@ -160,7 +161,7 @@ test('admin shows the price list pre-filled for the mall country; editing a pric
   const browser = await chromium.launch();
   try {
     const p = await browser.newPage({ viewport: { width: 390, height: 1100 } });
-    p.on('dialog', (d) => d.accept('a1'));
+    p.on('dialog', (d) => d.accept('a111'));
     await p.goto('http://localhost:' + srv.address().port + '/admin.html');
     await p.selectOption('#mallsel', '1');
     await p.click('#priceBox summary');
@@ -172,5 +173,27 @@ test('admin shows the price list pre-filled for the mall country; editing a pric
     await p.waitForFunction(() => document.querySelector('#pmsg').textContent.includes('✓'));
     assert.equal(db.prepare("SELECT amount a FROM prices WHERE country='SN' AND item='famille'").get().a, 11000);
     assert.equal(db.prepare("SELECT amount a FROM prices WHERE country='BJ' AND item='famille'").get().a, 8500);
+  } finally { await browser.close(); srv.close(); }
+});
+
+test('with several malls a staff page asks which mall once, then remembers it', async () => {
+  const db = openDb();
+  db.prepare("INSERT INTO malls(id,name,country) VALUES(1,'Dakar','SN'),(2,'Cotonou','BJ')").run();
+  const { addWalkIn } = require('../server/queue');
+  addWalkIn(db, 2, { name: 'Benin family', phone: '', consent: true });
+  const srv = createServer({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
+  await new Promise((r) => srv.listen(0, r));
+  const browser = await chromium.launch();
+  try {
+    const ctx = await browser.newContext();
+    const p = await ctx.newPage();
+    p.on('dialog', (d) => d.accept('h111'));
+    await p.goto('http://localhost:' + srv.address().port + '/host.html');
+    await p.click('button[data-mall="2"]');
+    await p.waitForSelector('.q');
+    assert.ok((await p.textContent('#q')).includes('Benin family'));
+    await p.reload();
+    await p.waitForSelector('.q'); // remembered: no picker this time
+    assert.equal(await p.locator('button[data-mall]').count(), 0);
   } finally { await browser.close(); srv.close(); }
 });

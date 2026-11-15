@@ -15,14 +15,15 @@
 <script src="/app.js"></script>
 <script>
 let slot = null;
-$('#day').value = new Date().toISOString().slice(0, 10);
+$('#day').value = $('#day').min = new Date().toISOString().slice(0, 10);
 async function loadSlots() {
-  const s = await pub('GET', `/api/slots?mall=${$('#mall').value}&day=${$('#day').value}`);
+  let s = [];
+  if ($('#mall').value) { try { s = await pub('GET', `/api/slots?mall=${$('#mall').value}&day=${$('#day').value}`); } catch (e) { $('#err').textContent = errText(e.message); } }
   slot = null; check();
   $('#slots').innerHTML = s.length ? '' : `<p>${t('no_slots')}</p>`;
   for (const x of s) {
     const b = document.createElement('button');
-    b.textContent = new Date(x.start_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + (x.remaining ? ` (${x.remaining})` : ' ' + t('full'));
+    b.textContent = x.local_time + (x.remaining ? ` (${x.remaining})` : ' ' + t('full'));
     b.disabled = !x.remaining;
     b.onclick = () => { slot = x.id; [...$('#slots').children].forEach((c) => c.classList.remove('on')); b.classList.add('on'); check(); };
     $('#slots').append(b);
@@ -33,13 +34,15 @@ const check = () => ($('#go').disabled = !(slot && $('#name').value.trim() && $(
 $('#day').onchange = $('#mall').onchange = loadSlots;
 $('#go').onclick = async () => {
   try {
+    $('#go').disabled = true; // no double bookings from a double tap
     const r = await pub('POST', '/api/book', { slotId: slot, name: $('#name').value, phone: $('#phone').value, consent: $('#consent').checked });
     $('#form').hidden = true; $('#done').hidden = false; $('#code').textContent = r.code; $('#qr').src = '/api/qr/' + r.code;
   } catch (e) { $('#err').textContent = errText(e.message); loadSlots(); }
 };
-$('#cbtn').onclick = async () => { try { await pub('POST', '/api/cancel', { code: $('#ccode').value.trim().toUpperCase() }); $('#cmsg').textContent = t('cancelled'); } catch (e) { $('#cmsg').textContent = errText(e.message); } };
+$('#cbtn').onclick = async () => { try { await pub('POST', '/api/cancel', { code: $('#ccode').value.trim().toUpperCase() }); $('#cmsg').textContent = t('cancelled'); loadSlots(); } catch (e) { $('#cmsg').textContent = errText(e.message); } };
 (async () => {
-  const malls = await pub('GET', '/api/malls');
+  let malls = [];
+  try { malls = await pub('GET', '/api/malls'); } catch (e) { $('#err').textContent = errText(e.message); }
   $('#mall').innerHTML = malls.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
   applyI18n(); loadSlots();
 })();

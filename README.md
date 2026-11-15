@@ -10,11 +10,16 @@ PINS='{"host":"1111","photographer":"2222","cashier":"3333","monitor":"4444","ad
 Env: `PINS` (required, one PIN per role), `PORT` (default 3000), `DATA_DIR` (default `./data`, holds `app.db` and `photos/`).
 
 ## Pages
-`/book.html` (public), `/host.html?mall=1`, `/photographer.html?mall=1`, `/monitor.html?mall=1`, `/cashier.html?mall=1`, `/admin.html?mall=1`, `/dashboard.html` (admin PIN; KPIs filtered per country, default Senegal). Staff pages ask for their role's PIN (admin PIN works everywhere).
+`/` (public booking), `/host.html`, `/photographer.html`, `/monitor.html`, `/cashier.html`, `/admin.html`, `/dashboard.html`.
+Staff pages ask for their role's PIN (the admin PIN works everywhere). With several malls, each device asks which mall once and remembers it. The cashier types their name once; it is recorded on every payment.
+
+## Security notes
+- `PINS` must hold a different PIN of 4+ characters for each role; the server refuses to start otherwise.
+- PINs travel in a request header only, never in a URL. 20 wrong PINs from one address lock that address out for 10 minutes.
+- Run behind HTTPS (Hostinger provides it).
 
 ## Add a mall
-On the admin page (`/admin.html`): add the mall, note its ID, then open pages with `?mall=<ID>`.
-Add slots from the admin page (times are entered and shown in UTC).
+On the admin page (`/admin.html`): add the mall, then create its time slots with the one-step form (local time).
 
 ## At the mall
 - Photographer laptop: `node tools/uploader.js <cameraFolder> <serverUrl> <photographerPin> <mallId>`
@@ -24,7 +29,7 @@ Add slots from the admin page (times are entered and shown in UTC).
 Final consent wording for children's photos (placeholder in use), real printer integration (hot-folder assumed), HTTPS in front of the server.
 
 ## Exports
-Dashboard buttons download CSV (semicolon-separated with BOM, opens directly in French-locale Excel): all paid orders, or a per-day summary, for the chosen country and dates. Hours and days are UTC; the peak-hours chart shifts Benin by +1 hour.
+Dashboard buttons download CSV (semicolon-separated with BOM, opens directly in French-locale Excel): all paid orders, or a per-day summary, for the chosen country and dates. Days and hours are local to each mall (Benin is UTC+1).
 
 ## Tests
-`npm test` (the UI test needs Playwright installed).
+`npm test` (the UI tests need Playwright). Lint: see `eslint.config.js`.

@@ -1,38 +1,61 @@
 <!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Picture Me Please</title><link rel="stylesheet" href="/style.css"></head><body><main>
 <div class="top"><h1>Caisse</h1><button class="alt" onclick="toggleLang()" data-t="lang"></button></div>
-<div class="card"><input id="code" data-tp="code" autocapitalize="characters"><button id="load" data-t="check_in"></button></div>
-<div class="card" id="o" hidden><div id="lines"></div><div class="tot" id="tot"></div>
+<div class="card"><input id="who" data-tp="cashier_name" maxlength="40" autocomplete="name"><input id="code" data-tp="code" autocapitalize="characters" maxlength="8"><button id="load" data-t="load"></button><p id="lmsg" class="err"></p></div>
+<div class="card" id="o" hidden><div id="lines"></div><div class="tot" id="tot"></div><p id="nph"></p>
 <div id="payform"><h2 data-t="method"></h2>
 <label class="row"><input type="radio" name="m" value="cash" checked><span data-t="cash"></span></label>
 <label class="row"><input type="radio" name="m" value="mobile_money"><span data-t="mobile_money"></span></label>
-<div id="momo" hidden><label data-t="provider"></label><select id="prov"></select><input id="ref" data-tp="reference"></div>
-<div id="cashf"><input id="recv" type="number" inputmode="numeric" data-tp="received"></div>
+<div id="momo" hidden><label data-t="provider"></label><select id="prov"></select><input id="ref" data-tp="reference" maxlength="60"></div>
+<div id="cashf"><input id="recv" type="number" inputmode="numeric" min="0" step="1" data-tp="received"></div>
 <button id="pay" data-t="paid_btn" disabled></button></div><p id="msg"></p></div>
 </main><script src="/app.js"></script><script>
-let order = null, code = '';
+let order = null, code = '', busy = false;
+$('#who').value = store.get('cashier') || '';
 const method = () => document.querySelector('input[name=m]:checked').value;
 function valid() {
-  if (!order || order.paid) return false;
-  return method() === 'cash' ? +$('#recv').value >= order.total : !!$('#ref').value.trim();
+  if (!order || order.paid || busy || !order.photos || !$('#who').value.trim()) return false;
+  return method() === 'cash' ? Number.isInteger(+$('#recv').value) && +$('#recv').value >= order.total : !!$('#ref').value.trim();
 }
 const sync = () => { $('#momo').hidden = method() !== 'mobile_money'; $('#cashf').hidden = method() !== 'cash'; $('#pay').disabled = !valid(); };
-document.querySelectorAll('input[name=m]').forEach((r) => (r.onchange = sync)); ['recv', 'ref'].forEach((i) => $('#' + i).oninput = sync);
-async function load() {
-  code = $('#code').value.trim().toUpperCase();
-  try { order = await api('GET', '/api/order?code=' + code); } catch (e) { order = null; $('#o').hidden = true; return; }
-  $('#o').hidden = false;
+document.querySelectorAll('input[name=m]').forEach((r) => (r.onchange = sync));
+['recv', 'ref', 'who'].forEach((i) => ($('#' + i).oninput = () => { if (i === 'who') store.set('cashier', $('#who').value.trim()); sync(); }));
+function show() {
+  $('#o').hidden = !order;
+  if (!order) return;
   $('#lines').innerHTML = order.lines.map((l) => `<div class="item"><span>${l.qty}× ${t(l.item)} ${l.discounted ? '<b class="good">' + t('discount') + '</b>' : ''}</span><span>${xof(l.amount)}</span></div>`).join('');
   $('#tot').textContent = t('total') + ' ' + xof(order.total);
-  $('#prov').innerHTML = PROVIDERS[order.country].map((p) => `<option>${p}</option>`).join('');
+  $('#nph').textContent = order.photos ? `${order.photos} ${t('photos_sel')}` : t('e_no photos'); $('#nph').className = order.photos ? '' : 'err';
+  const list = PROVIDERS[order.country].map((p) => `<option>${esc(p)}</option>`).join('');
+  if ($('#prov').innerHTML !== list) $('#prov').innerHTML = list;
   $('#payform').hidden = order.paid;
-  $('#msg').textContent = order.paid ? t('paid') + (order.print_state === 'ready' ? ' · ' + t('printing') : '') : '';
+  if (order.paid) { $('#msg').textContent = t('paid') + (order.print_state === 'ready' ? ' · ' + t('printing') : ''); $('#msg').className = 'good'; }
   sync();
 }
-$('#load').onclick = load;
+async function load(quiet) {
+  const want = $('#code').value.trim().toUpperCase();
+  if (!want) return;
+  try { const o = await api('GET', '/api/order?code=' + encodeURIComponent(want)); if (want !== code) { $('#msg').textContent = ''; $('#recv').value = $('#ref').value = ''; } code = want; order = o; $('#lmsg').textContent = ''; }
+  catch (e) { if (!quiet || want !== code) { order = null; code = ''; $('#lmsg').textContent = errText(e.message); } }
+  show();
+}
+$('#load').onclick = () => load(false);
 $('#pay').onclick = async () => {
-  try { await api('POST', '/api/pay', { code, expectedTotal: order.total, method: method(), provider: method() === 'mobile_money' ? $('#prov').value : undefined, reference: $('#ref').value, amountReceived: +$('#recv').value || undefined }); load(); }
+  busy = true; sync(); // one tap, one payment
+  try { const cash = method() === 'cash';
+    await api('POST', '/api/pay', { code, expectedTotal: order.total, cashier: $('#who').value.trim(), method: method(), provider: cash ? undefined : $('#prov').value, reference: cash ? undefined : $('#ref').value.trim(), amountReceived: cash ? +$('#recv').value : undefined }); }
   catch (e) { $('#msg').textContent = errText(e.message); $('#msg').className = 'err'; }
+  busy = false; await load(true);
 };
-(async () => { applyI18n(); try { const a = await api('GET', '/api/active?mall=' + mall); if (a) { $('#code').value = a.code; load(); } } catch (e) {} })();
-window.render = load;
+// Keeps the total in step with the monitor, and moves on to the next family once this one has paid.
+async function follow() {
+  try {
+    if (busy) return;
+    const a = await api('GET', '/api/active?mall=' + mall);
+    const typing = document.activeElement === $('#code');
+    if (a && !typing && (!code || (order && order.paid && a.code !== code))) $('#code').value = a.code;
+    await load(true);
+  } catch (e) { /* retried on the next tick */ }
+}
+window.render = show; applyI18n();
+initMall().then(() => { follow(); setInterval(follow, 3000); }).catch((e) => { $('#lmsg').textContent = errText(e.message); });
 </script></body></html>

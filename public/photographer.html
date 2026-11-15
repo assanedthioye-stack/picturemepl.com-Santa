@@ -6,7 +6,8 @@ async function refresh() {
   try { const a = await api('GET', '/api/active?mall=' + mall);
     $('#who').textContent = a ? a.name : t('waiting_family'); $('#code').textContent = a ? a.code : '';
     $('#n').textContent = a ? (await api('GET', '/api/gallery/' + a.code)).length + ' ' + t('photos') : '';
-  } catch (e) { $('#who').textContent = errText(e.message); }
+  } catch (e) { $('#who').textContent = errText(e.message); $('#code').textContent = $('#n').textContent = ''; }
 }
-window.render = refresh; applyI18n(); refresh(); setInterval(refresh, 2000);
+window.render = refresh; applyI18n();
+initMall().then(() => { refresh(); setInterval(refresh, 2000); }).catch((e) => { $('#who').textContent = errText(e.message); });
 </script></body></html>

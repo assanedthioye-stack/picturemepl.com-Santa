@@ -1,47 +1,65 @@
-const { newCode } = require('./booking');
-const GRACE_MS = 30 * 60000;
+const { newCode, cleanText, GRACE_MS } = require('./booking');
+const { tx, mallById } = require('./db');
+
+const ORDER = "ORDER BY (kind='walkin'), sort_at, id"; // on-time appointments by slot, then walk-ins by arrival
 
 function position(db, mallId, code) {
   return getQueue(db, mallId).filter((q) => q.state === 'waiting').findIndex((q) => q.code === code) + 1;
 }
 
-function checkIn(db, code, now = new Date()) {
-  const existing = db.prepare('SELECT * FROM queue WHERE code=?').get(code);
-  if (existing) return { kind: existing.kind, position: position(db, existing.mall_id, code) };
-  const b = db.prepare(`SELECT b.id, b.name, b.phone, b.status, s.start_at, s.mall_id
-    FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE b.code=?`).get(code);
-  if (!b || b.status === 'cancelled') throw new Error('unknown code');
-  const late = now - new Date(b.start_at) > GRACE_MS; // after 30 min: treated as walk-in
-  const kind = late ? 'walkin' : 'appointment';
-  db.prepare(`INSERT INTO queue(mall_id,booking_id,code,name,phone,kind,sort_at,checked_in_at) VALUES(?,?,?,?,?,?,?,?)`)
-    .run(b.mall_id, b.id, code, b.name, b.phone, kind, late ? now.toISOString() : b.start_at, now.toISOString());
-  db.prepare("UPDATE bookings SET status='checked_in' WHERE id=?").run(b.id);
-  return { kind, position: position(db, b.mall_id, code) };
+// mallId: the host's mall. A code booked for another mall is refused instead of silently joining that mall's queue.
+function checkIn(db, code, now = new Date(), mallId = null) {
+  return tx(db, () => {
+    const existing = db.prepare('SELECT * FROM queue WHERE code=?').get(String(code || ''));
+    if (existing) {
+      if (mallId !== null && existing.mall_id !== mallId) throw new Error('wrong mall');
+      return { kind: existing.kind, position: position(db, existing.mall_id, existing.code) };
+    }
+    const b = db.prepare(`SELECT b.id, b.code, b.name, b.phone, b.status, s.start_at, s.mall_id
+      FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE b.code=?`).get(String(code || ''));
+    if (!b || b.status === 'cancelled') throw new Error('unknown code');
+    if (mallId !== null && b.mall_id !== mallId) throw new Error('wrong mall');
+    const late = +now - Date.parse(b.start_at) > GRACE_MS; // after 30 min: treated as walk-in
+    const kind = late ? 'walkin' : 'appointment';
+    db.prepare('INSERT INTO queue(mall_id,booking_id,code,name,phone,kind,sort_at,checked_in_at) VALUES(?,?,?,?,?,?,?,?)')
+      .run(b.mall_id, b.id, b.code, b.name, b.phone, kind, late ? now.toISOString() : new Date(b.start_at).toISOString(), now.toISOString());
+    db.prepare("UPDATE bookings SET status='checked_in' WHERE id=?").run(b.id);
+    return { kind, position: position(db, b.mall_id, b.code) };
+  });
 }
 
-function addWalkIn(db, mallId, { name, phone, consent }, now = new Date()) {
-  if (!consent) throw new Error('consent');
-  if (!name) throw new Error('name required');
-  const code = newCode();
-  db.prepare(`INSERT INTO queue(mall_id,code,name,phone,kind,sort_at,checked_in_at) VALUES(?,?,?,?,'walkin',?,?)`)
-    .run(mallId, code, name, phone || '', now.toISOString(), now.toISOString());
-  return { code };
+function addWalkIn(db, mallId, /** @type {any} */ input, now = new Date()) {
+  const { name, phone, consent } = input || {};
+  const mall = mallById(db, mallId);
+  if (consent !== true) throw new Error('consent');
+  const n = cleanText(name, 80);
+  if (!n) throw new Error('name required');
+  return tx(db, () => {
+    let code = newCode();
+    while (db.prepare('SELECT 1 FROM bookings WHERE code=? UNION SELECT 1 FROM queue WHERE code=?').get(code, code)) code = newCode();
+    db.prepare("INSERT INTO queue(mall_id,code,name,phone,kind,sort_at,checked_in_at) VALUES(?,?,?,?,'walkin',?,?)")
+      .run(mall.id, code, n, cleanText(phone, 24), now.toISOString(), now.toISOString());
+    return { code };
+  });
 }
 
 function getQueue(db, mallId) {
-  return db.prepare(`SELECT code, name, kind, state FROM queue WHERE mall_id=? AND state!='done'
-    ORDER BY (kind='walkin'), sort_at, id`).all(mallId);
+  return db.prepare(`SELECT code, name, kind, state FROM queue WHERE mall_id=? AND state!='done' ${ORDER}`).all(mallId);
 }
 
+const active = (db, mallId) => db.prepare("SELECT code, name FROM queue WHERE mall_id=? AND state='serving'").get(mallId) || null;
+
 function serveNext(db, mallId, { force = false, now = new Date() } = {}) {
-  const open = db.prepare(`SELECT 1 FROM queue q JOIN orders o ON o.code=q.code
-    WHERE q.mall_id=? AND q.state='serving' AND o.paid_at IS NULL AND o.total>0`).get(mallId);
-  if (open && !force) throw new Error('unpaid order');
-  db.prepare("UPDATE queue SET state='done' WHERE mall_id=? AND state='serving'").run(mallId);
-  const next = db.prepare(`SELECT code, name FROM queue WHERE mall_id=? AND state='waiting'
-    ORDER BY (kind='walkin'), sort_at, id LIMIT 1`).get(mallId);
-  if (!next) return null;
-  db.prepare("UPDATE queue SET state='serving', served_at=? WHERE code=?").run(now.toISOString(), next.code);
-  return { code: next.code, name: next.name };
+  mallById(db, mallId);
+  return tx(db, () => {
+    const open = db.prepare(`SELECT 1 FROM queue q JOIN orders o ON o.code=q.code
+      WHERE q.mall_id=? AND q.state='serving' AND o.paid_at IS NULL AND o.total>0`).get(mallId);
+    if (open && !force) throw new Error('unpaid order');
+    db.prepare("UPDATE queue SET state='done' WHERE mall_id=? AND state='serving'").run(mallId);
+    const next = db.prepare(`SELECT code, name FROM queue WHERE mall_id=? AND state='waiting' ${ORDER} LIMIT 1`).get(mallId);
+    if (!next) return null;
+    db.prepare("UPDATE queue SET state='serving', served_at=? WHERE code=?").run(now.toISOString(), next.code);
+    return { code: next.code, name: next.name };
+  });
 }
-module.exports = { checkIn, addWalkIn, getQueue, serveNext };
+module.exports = { checkIn, addWalkIn, getQueue, serveNext, active };

@@ -8,17 +8,18 @@ function seed() {
   const db = openDb();
   db.prepare("INSERT INTO malls(id,name,country) VALUES(1,'Sea Plaza','SN'),(2,'Cocody','CI')").run();
   db.prepare("INSERT INTO slots(id,mall_id,start_at,capacity) VALUES(1,1,'2026-12-20T09:00:00Z',5)").run();
-  book(db, { slotId: 1, name: 'NoShow', phone: '1', consent: true }); // never checks in
-  const w = (mall, at) => addWalkIn(db, mall, { name: 'x', phone: '1', consent: true }, at).code;
+  book(db, { slotId: 1, name: 'NoShow', phone: '+221700000000', consent: true }); // never checks in
+  const w = (mall, at) => addWalkIn(db, mall, { name: 'x', phone: '+221700000000', consent: true }, at).code;
   const a = w(1, T(0)), b = w(1, T(0)), c = w(2, T(0));
+  for (const x of [a, b, c]) db.prepare("INSERT INTO photos(code,file) VALUES(?,'p.jpg')").run(x);
   serveNext(db, 1, { now: T(5) }); // A waited 5
-  saveCart(db, a, [{ item: 'famille', qty: 1 }, { item: 'print_8x10', qty: 1 }], []);
+  saveCart(db, a, [{ item: 'famille', qty: 1 }, { item: 'print_8x10', qty: 1 }], ['p.jpg']);
   pay(db, a, { method: 'cash', amountReceived: 12800, expectedTotal: 12800, cashier: 'amy' }, T(20));
   serveNext(db, 1, { now: T(15) }); // B waited 15
-  saveCart(db, b, [{ item: 'essentiel', qty: 2 }], []);
+  saveCart(db, b, [{ item: 'essentiel', qty: 2 }], ['p.jpg']);
   pay(db, b, { method: 'mobile_money', provider: 'Wave', reference: 'R', expectedTotal: 13500, cashier: 'bob' }, T(30));
   serveNext(db, 2, { now: T(10) });
-  saveCart(db, c, [{ item: 'numerique', qty: 1 }], []);
+  saveCart(db, c, [{ item: 'numerique', qty: 1 }], ['p.jpg']);
   pay(db, c, { method: 'cash', amountReceived: 6000, expectedTotal: 6000, cashier: 'cy' }, T(25));
   return db;
 }

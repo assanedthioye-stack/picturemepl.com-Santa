@@ -13,7 +13,7 @@ function setup() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-'));
   return { db, dir };
 }
-const walk = (db, n) => addWalkIn(db, 1, { name: n, phone: '1', consent: true }).code;
+const walk = (db, n) => addWalkIn(db, 1, { name: n, phone: '+221700000000', consent: true }).code;
 
 test('ingest stores and lists for the serving family', () => {
   const { db, dir } = setup();
