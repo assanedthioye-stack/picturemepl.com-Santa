@@ -30,21 +30,38 @@ pnpm --filter @pmp/booth-server dev:session   # DEV: a walk-in booking, a dispat
 
 Staff PINs are 4–6 digits; admins need a password of 10+ characters. 5 wrong tries lock the account for 15 minutes.
 
-## Files on disk (`C:\PhotoBooth`, override with `PMP_ROOT`)
+## Storage
+
+| Variable | Default | Holds | Put it on |
+|---|---|---|---|
+| `PMP_ROOT` | `C:\PhotoBooth` | `Data\booth.sqlite`, `PrintSpool\` | **internal disk only** (an unplugged drive can corrupt the database) |
+| `PMP_PHOTOS_DIR` | same as `PMP_ROOT` | `Sessions\`, `Unassigned\`, `Incoming\` | internal disk (recommended) |
+| `PMP_MIRROR_DIR` | off | a verified second copy of every original | external USB drive |
 
 ```
-Data\booth.sqlite                 WAL, synchronous=FULL
 Sessions\{SessionID}\IMG_0001.JPG full-res, untouched (+ .CR2 when RAW+JPEG)
-Sessions\{SessionID}\previews\    1600 px watermarked previews (the only images served over HTTP)
+Sessions\{SessionID}\previews\    1600 px watermarked previews (the only images served over HTTP; not mirrored)
 Unassigned\                       shots taken while no session was armed
-PrintSpool\                       temporary PDFs, deleted after printing
 ```
+
+**Backup drive setup (once):** create the folder yourself, e.g. `E:\PhotoBooth-Backup`, then:
+
+```bat
+setx PMP_MIRROR_DIR "E:\PhotoBooth-Backup"
+```
+
+Restart the app afterwards. Every original is copied right after download, read back and compared (SHA-256) before it counts as backed up.
+- If the folder is missing (drive unplugged, different drive letter), shooting continues; the Photographer screen shows **"Disque de sauvegarde absent"** and a pending count. When the drive returns, missed files are copied on the next shot or within 60 s (shots from the last 48 h).
+- The app never creates the backup root itself, so a wrong or missing drive can't silently receive files.
+- The top bar shows free space; it turns red under 20 GB on either disk.
+
+**Capacity (estimates for the T7's 24 MP):** JPEG-only (default) ≈ 7 MB/shot ≈ 28 GB per 100 families of 40 shots; RAW+JPEG ≈ 32 MB/shot ≈ 128 GB. Set the `camera.quality` setting to `raw+jpeg` only if you edit RAW files.
 
 ## Canon Rebel T7 (EOS 2000D)
 
 - **Driver order:** EDSDK (`@brick-a-brack/napi-canon-cameras`, remote shutter, ~instant download), then **WIA** if the Canon module cannot load (camera keeps saving to SD; new files are copied every ~1.5 s; no remote shutter). Force one with `PMP_CAMERA_DRIVER=edsdk|wia` or the `cameras.driver` column.
 - **Close Canon EOS Utility** and disable Windows AutoPlay for the camera: they grab the USB session and EDSDK then sees no camera.
-- With EDSDK the camera is set to `SaveTo=Host`: nothing is written to the SD card. Quality defaults to RAW+L JPEG; set the `camera.quality` setting to `jpeg` to halve transfer time.
+- With EDSDK the camera is set to `SaveTo=Host`: nothing is written to the SD card. Quality defaults to Large Fine JPEG (`camera.quality` = `raw+jpeg` to also keep CR2).
 - Physical shutter presses are downloaded too. A shot with no armed session goes to `Unassigned\`.
 - Licensing: the npm package bundles Canon's `EDSDK.dll`. Make sure your Canon SDK agreement covers redistributing it.
 

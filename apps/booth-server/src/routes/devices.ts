@@ -24,12 +24,14 @@ const NewPrint = z.object({
 
 /** Camera control, print jobs and preview files. */
 export function deviceRoutes(deps: Deps): Router {
-  const { db, hub, boothId, cameras, printQueue, spooler, config } = deps;
+  const { db, hub, boothId, cameras, printQueue, spooler, config, mirror } = deps;
   const r = Router();
 
   r.get('/api/cameras', requirePerm('camera.view'), (_req, res) => {
     res.json([...cameras.values()].map((c) => ({ id: c.cameraId, armedSessionId: c.armedSessionId(), ...c.status })));
   });
+
+  r.get('/api/storage', requirePerm('camera.view', 'print.view'), (_req, res) => res.json(mirror.status()));
 
   r.post('/api/cameras/:id/shutter', requirePerm('session.shoot'), async (req, res) => {
     const cam = cameras.get(String(req.params.id));

@@ -40,5 +40,11 @@
   "camera.noSession": "Start a session to shoot",
   "photos.empty": "Photos will appear here",
   "photos.unassigned": "Photo taken with no session: saved to Unassigned",
-  "sessions.party": "people"
+  "sessions.party": "people",
+  "storage.backup.ok": "Backup OK",
+  "storage.backup.pending": "Backing up",
+  "storage.backup.missing": "Backup drive missing",
+  "storage.backup.off": "No backup",
+  "storage.free": "GB free",
+  "storage.low": "Low disk space"
 }

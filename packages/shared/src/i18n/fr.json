@@ -40,5 +40,11 @@
   "camera.noSession": "Commencez une séance pour déclencher",
   "photos.empty": "Les photos apparaîtront ici",
   "photos.unassigned": "Photo prise sans séance : enregistrée dans Unassigned",
-  "sessions.party": "pers."
+  "sessions.party": "pers.",
+  "storage.backup.ok": "Sauvegarde OK",
+  "storage.backup.pending": "Sauvegarde en cours",
+  "storage.backup.missing": "Disque de sauvegarde absent",
+  "storage.backup.off": "Pas de sauvegarde",
+  "storage.free": "Go libres",
+  "storage.low": "Espace disque faible"
 }

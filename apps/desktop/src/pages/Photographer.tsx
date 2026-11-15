@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, useEvents, type CameraInfo, type Me, type PhotoDto, type SessionRow } from '../api';
+import { api, useEvents, type CameraInfo, type Me, type PhotoDto, type SessionRow, type StorageInfo } from '../api';
 import { useT } from '../i18n';
 import { TopBar } from './StaffApp';
 
@@ -10,6 +10,7 @@ export function Photographer({ me, onSignOut, onBack }: { me: Me; onSignOut(): v
   const [photos, setPhotos] = useState<PhotoDto[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [shooting, setShooting] = useState(false);
+  const [storage, setStorage] = useState<StorageInfo | null>(null);
 
   const armed = sessions.find((s) => s.status === 'armed') ?? null;
 
@@ -21,8 +22,10 @@ export function Photographer({ me, onSignOut, onBack }: { me: Me; onSignOut(): v
     setPhotos(current ? await api<PhotoDto[]>('GET', `/api/sessions/${current.id}/photos`) : []);
   }, []);
   useEffect(() => { refresh().catch(() => setNotice(t('error.generic'))); }, [refresh]);
+  useEffect(() => { api<StorageInfo>('GET', '/api/storage').then(setStorage, () => {}); }, []);
 
   useEvents({
+    'storage.status': setStorage,
     'camera.status': (s) => setCamera((c) => (c && c.id === s.cameraId ? { ...c, ...s } : c)),
     'session.updated': () => void refresh(),
     'photo.ready': (p: PhotoDto) => setPhotos((ps) => (p.sessionId === armed?.id && !ps.some((x) => x.id === p.id) ? [...ps, p] : ps)),
@@ -47,6 +50,7 @@ export function Photographer({ me, onSignOut, onBack }: { me: Me; onSignOut(): v
     <div className="flex h-full flex-col">
       <TopBar me={me} onSignOut={onSignOut}>
         {onBack && <button onClick={onBack} className="text-sm text-slate-600 underline">{t('login.back')}</button>}
+        <StoragePill storage={storage} />
         <CameraPill camera={camera} />
       </TopBar>
 
@@ -123,6 +127,28 @@ function CameraPill({ camera }: { camera: CameraInfo | null }) {
       <span className="font-medium">{ok ? camera?.model ?? t('camera.connected') : t('camera.disconnected')}</span>
       <span className={low ? 'font-semibold text-brand-600' : 'text-slate-500'}>{t('camera.battery')} {battery}</span>
       <span className="text-xs uppercase text-slate-400">{camera?.driver ?? '—'}</span>
+    </div>
+  );
+}
+
+/** Backup + free-space health. Red means act now: plug the backup drive back in, or free space. */
+function StoragePill({ storage }: { storage: StorageInfo | null }) {
+  const { t } = useT();
+  if (!storage) return null;
+  const m = storage.mirror;
+  const [tone, label] = !m.enabled ? ['amber', t('storage.backup.off')]
+    : !m.connected ? ['red', t('storage.backup.missing')]
+    : m.pending > 0 ? ['amber', `${t('storage.backup.pending')} (${m.pending})`]
+    : ['green', t('storage.backup.ok')];
+  const low = storage.photosLow || m.low;
+  const free = storage.photosFreeGb != null ? `${Math.round(storage.photosFreeGb)} ${t('storage.free')}` : '';
+  const dot = { green: 'bg-emerald-500', amber: 'bg-amber-500', red: 'bg-brand-600' }[tone as 'green'];
+  return (
+    <div role="status" title={m.lastError ?? undefined}
+      className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${tone === 'red' || low ? 'border-brand-500 bg-brand-50' : 'border-slate-200'}`}>
+      <span className={`size-2.5 rounded-full ${dot}`} aria-hidden />
+      <span className="font-medium">{label}</span>
+      <span className={low ? 'font-semibold text-brand-600' : 'text-slate-500'}>{low ? `${t('storage.low')} · ` : ''}{free}</span>
     </div>
   );
 }

@@ -16,6 +16,8 @@ export interface CameraServiceOpts {
   incomingDir: string;
   ingest: IngestCtx;
   driver: CameraDriver | null;
+  /** Called for every file the camera wrote (RAW, JPEG, unassigned), e.g. to mirror it. */
+  onFileWritten?: (file: string) => void;
 }
 
 const OFFLINE: CameraStatus = {
@@ -61,6 +63,7 @@ export class CameraService {
         downloaded: (file, name) => {
           const sessionId = this.pending.get(file) ?? null;
           this.pending.delete(file);
+          this.o.onFileWritten?.(file);
           if (!sessionId) {
             this.o.hub.send('photo.unassigned', { fileName: path.basename(file) });
             return;

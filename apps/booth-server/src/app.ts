@@ -11,6 +11,7 @@ import { authRoutes } from './routes/auth';
 import { deviceRoutes } from './routes/devices';
 import { kioskRoutes, kioskState } from './routes/kiosk';
 import { sessionRoutes } from './routes/sessions';
+import type { MirrorService } from './storage/mirror';
 
 export interface Deps {
   db: Db;
@@ -20,6 +21,7 @@ export interface Deps {
   cameras: Map<string, CameraService>;
   printQueue: PrintQueue;
   spooler: Spooler;
+  mirror: MirrorService;
 }
 
 export function createApp(deps: Deps): express.Express {
@@ -40,7 +42,10 @@ export function createApp(deps: Deps): express.Express {
     deps.hub.attach(req, res, p.kind === 'kiosk' ? 'kiosk' : 'staff', () =>
       p.kind === 'kiosk'
         ? [['kiosk.state', kioskState(deps.db)]]
-        : [...deps.cameras.values()].map((c) => ['camera.status', { cameraId: c.cameraId, ...c.status }]));
+        : [
+          ...[...deps.cameras.values()].map((c) => ['camera.status', { cameraId: c.cameraId, ...c.status }] as [string, unknown]),
+          ['storage.status', deps.mirror.status()],
+        ]);
   });
 
   // The React build (staff UI + /kiosk). Unknown non-API paths fall back to the SPA.

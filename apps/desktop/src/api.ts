@@ -35,6 +35,10 @@ export interface CameraInfo {
   id: string; armedSessionId: string | null; driver: string; connected: boolean; model: string | null;
   batteryPercent: number | null; onAcPower: boolean; canRemoteShutter: boolean; error: string | null;
 }
+export interface StorageInfo {
+  photosFreeGb: number | null; photosLow: boolean;
+  mirror: { enabled: boolean; connected: boolean; pending: number; freeGb: number | null; low: boolean; lastError: string | null };
+}
 export interface SessionRow {
   id: string; code: string; status: 'dispatched' | 'armed' | 'shot_complete' | 'cancelled'; bookingCode: string; partySize: number;
 }
