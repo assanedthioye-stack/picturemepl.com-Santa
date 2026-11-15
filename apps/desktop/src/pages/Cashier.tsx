@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { PrintSize } from '@pmp/shared';
+import { COUNTRIES, PRINT_LABEL, type MomoMethod, type PrintSize } from '@pmp/shared';
 import { api, useEvents, type Me, type PhotoDto } from '../api';
 import { errorText, money, useT } from '../i18n';
 import { TopBar } from './StaffApp';
@@ -7,7 +7,7 @@ import { TopBar } from './StaffApp';
 interface Family { bookingId: string; bookingCode: string; familyName: string | null; photoCount: number; favCount: number }
 interface Package { id: string; code: string; nameFr: string; nameEn: string; priceXof: number; digitalsIncluded: number; prints: Partial<Record<PrintSize, number>> }
 interface Drawer { id: string; openingFloatXof: number }
-type Method = 'cash' | 'wave' | 'orange_money' | 'mtn_momo';
+type Method = 'cash' | MomoMethod;
 
 export function Cashier({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav?: React.ReactNode }) {
   const { t, locale } = useT();
@@ -95,6 +95,11 @@ export function Cashier({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav
   }
 
   const seqOf = (id: string) => photos.find((p) => p.id === id)?.seq;
+  const contents = (p: Package) => [
+    ...(Object.entries(p.prints) as [PrintSize, number][]).map(([s, n]) =>
+      s === 'wallet4' ? `${n * 4} ${t('pos.wallets')}` : `${n} × ${PRINT_LABEL[s]}`),
+    ...(p.digitalsIncluded === -1 ? [t('pos.digital.all')] : p.digitalsIncluded > 0 ? [`${p.digitalsIncluded} ${t('pos.digital.one')}`] : []),
+  ].join(' · ');
 
   return (
     <div className="flex h-full flex-col">
@@ -144,17 +149,18 @@ export function Cashier({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav
           )}
         </main>
 
-        <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto border-l border-slate-200 bg-white p-4">
+        <aside className="flex min-h-0 flex-col border-l border-slate-200 bg-white">
           {family && (
             <>
+              <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
               <section>
                 <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">{t('pos.packages')}</h2>
                 <ul className="flex flex-col gap-2">
                   {packages.map((p) => (
                     <li key={p.id} className="flex items-center gap-2 rounded-xl border border-slate-200 p-2">
                       <div className="min-w-0 flex-1">
-                        <p className="font-medium leading-tight">{locale === 'fr' ? p.nameFr : p.nameEn}</p>
-                        <p className="text-sm text-slate-500">{money(locale, p.priceXof)}</p>
+                        <p className="font-medium leading-tight">{locale === 'fr' ? p.nameFr : p.nameEn} <span className="font-normal text-slate-500">· {money(locale, p.priceXof)}</span></p>
+                        <p className="text-xs leading-snug text-slate-500">{contents(p)}</p>
                       </div>
                       <button aria-label="−" onClick={() => setQty({ ...qty, [p.id]: Math.max(0, (qty[p.id] ?? 0) - 1) })} className="size-9 rounded-full border border-slate-300">−</button>
                       <span className="w-5 text-center font-semibold">{qty[p.id] ?? 0}</span>
@@ -169,7 +175,7 @@ export function Cashier({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav
                   <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">{t('pos.slots')}</h2>
                   {(Object.entries(slots) as [PrintSize, string[]][]).map(([size, ids]) => (
                     <div key={size} className="mb-2 flex flex-wrap items-center gap-2">
-                      <span className="w-12 font-semibold">{size}</span>
+                      <span className="w-16 font-semibold">{PRINT_LABEL[size]}</span>
                       {ids.map((id, i) => (
                         <select key={i} aria-label={`${size} ${i + 1}`} value={id}
                           onChange={(e) => setSlots({ ...slots, [size]: ids.map((x, j) => (j === i ? e.target.value : x)) })}
@@ -182,13 +188,20 @@ export function Cashier({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav
                 </section>
               )}
 
-              <section className="mt-auto border-t border-slate-200 pt-3">
+              </div>
+
+              {/* Fixed footer: the total and the charge button never scroll away. */}
+              <section className="border-t border-slate-200 px-4 pb-4 pt-3 shadow-[0_-8px_16px_-12px_rgba(0,0,0,0.25)]">
                 <div className="flex items-baseline justify-between">
                   <span className="text-slate-500">{t('pos.total')}</span>
                   <span className="text-3xl font-bold">{money(locale, total)}</span>
                 </div>
                 <p className="text-right text-sm text-slate-500">{t('pos.vat')} {money(locale, vat)}</p>
-                {digitalsAllowed > 0 && <p className="text-sm text-slate-500">{digitalIds.length}/{digitalsAllowed} {t('ph.photos')}</p>}
+                {digitalsAllowed > 0 && (
+                  <p className={`text-sm ${digitalIds.length > digitalsAllowed ? 'font-semibold text-brand-600' : 'text-slate-500'}`}>
+                    {digitalIds.length}/{digitalsAllowed} {t('pos.digital.one')}{digitalIds.length > digitalsAllowed && ` — ${t('pos.digital.over')}`}
+                  </p>
+                )}
                 {error && <p role="alert" className="mt-2 rounded-lg bg-brand-50 px-3 py-2 text-brand-700">{error}</p>}
                 <button onClick={charge} disabled={total === 0 || !digitalOk || Object.values(slots).some((s) => s.length === 0)}
                   className="mt-3 w-full rounded-xl bg-brand-600 py-4 text-lg font-bold text-white disabled:opacity-30">
@@ -196,7 +209,7 @@ export function Cashier({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav
                 </button>
                 {Object.entries(slots).length > 0 && (
                   <p className="mt-2 text-xs text-slate-400">
-                    {(Object.entries(slots) as [PrintSize, string[]][]).map(([s, ids]) => `${s}: ${ids.map((id) => `#${seqOf(id)}`).join(' ')}`).join(' · ')}
+                    {(Object.entries(slots) as [PrintSize, string[]][]).map(([s, ids]) => `${PRINT_LABEL[s]}: ${ids.map((id) => `#${seqOf(id)}`).join(' ')}`).join(' · ')}
                   </p>
                 )}
               </section>
@@ -206,7 +219,7 @@ export function Cashier({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav
       </div>
 
       {checkout && (
-        <PaymentModal total={checkout.total} orderId={checkout.orderId} drawerOpen={!!drawer}
+        <PaymentModal total={checkout.total} orderId={checkout.orderId} drawerOpen={!!drawer} methods={['cash', ...COUNTRIES[me.boothCountry].momo]}
           onClose={() => setCheckout(null)}
           onPaid={() => { setCheckout(null); setFamily(null); setPhotos([]); void loadFamilies(); }} />
       )}
@@ -214,7 +227,7 @@ export function Cashier({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav
   );
 }
 
-function PaymentModal({ total, orderId, drawerOpen, onClose, onPaid }: { total: number; orderId: string; drawerOpen: boolean; onClose(): void; onPaid(): void }) {
+function PaymentModal({ total, orderId, drawerOpen, methods, onClose, onPaid }: { total: number; orderId: string; drawerOpen: boolean; methods: Method[]; onClose(): void; onPaid(): void }) {
   const { t, locale } = useT();
   const [method, setMethod] = useState<Method>('cash');
   const [tendered, setTendered] = useState(total);
@@ -256,8 +269,8 @@ function PaymentModal({ total, orderId, drawerOpen, onClose, onPaid }: { total: 
               <h2 id="pay-title" className="text-xl font-bold">{t('pay.title')}</h2>
               <span className="text-2xl font-bold">{money(locale, total)}</span>
             </div>
-            <div className="mb-4 grid grid-cols-4 gap-1 rounded-xl bg-slate-100 p-1" role="tablist">
-              {(['cash', 'wave', 'orange_money', 'mtn_momo'] as Method[]).map((m) => (
+            <div className="mb-4 grid gap-1 rounded-xl bg-slate-100 p-1" style={{ gridTemplateColumns: `repeat(${methods.length}, 1fr)` }} role="tablist">
+              {methods.map((m) => (
                 <button key={m} role="tab" aria-selected={method === m} onClick={() => { setMethod(m); setError(null); }}
                   className={`rounded-lg px-1 py-2 text-sm font-semibold ${method === m ? 'bg-white shadow' : 'text-slate-600'}`}>{t(`pay.${m}`)}</button>
               ))}

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { schema, writeSynced } from '@pmp/db';
 import type { Deps } from '../app';
@@ -38,7 +38,8 @@ export function sessionRoutes(deps: Deps): Router {
     res.json(db.select({ session: S, bookingCode: schema.bookings.code, partySize: schema.bookings.partySize, familyName: schema.customers.fullName, photoCount })
       .from(S).innerJoin(schema.bookings, eq(schema.bookings.id, S.bookingId))
       .innerJoin(schema.customers, eq(schema.customers.id, schema.bookings.customerId))
-      .where(and(inArray(S.status, ['dispatched', 'armed', 'shot_complete']), gt(S.createdAt, Date.now() - 18 * 3600_000)))
+      // Paid families leave the shoot list: no reshoot button once the order is settled.
+      .where(and(inArray(S.status, ['dispatched', 'armed', 'shot_complete']), ne(schema.bookings.status, 'completed'), gt(S.createdAt, Date.now() - 18 * 3600_000)))
       .orderBy(desc(S.createdAt)).all()
       .map((r) => ({ ...r.session, bookingCode: r.bookingCode, partySize: r.partySize, familyName: r.familyName, photoCount: r.photoCount })));
   });
@@ -51,6 +52,8 @@ export function sessionRoutes(deps: Deps): Router {
       const s = tx.select().from(S).where(eq(S.id, String(req.params.id))).get();
       if (!s) throw new HttpError(404, 'session_not_found');
       if (s.status !== 'dispatched' && s.status !== 'shot_complete') throw new HttpError(409, `session_${s.status}`);
+      const booking = tx.select({ status: schema.bookings.status }).from(schema.bookings).where(eq(schema.bookings.id, s.bookingId)).get();
+      if (booking?.status === 'completed') throw new HttpError(409, 'booking_completed');
       const cam = tx.select().from(schema.cameras).where(eq(schema.cameras.id, cameraId)).get()!;
       if (cam.armedSessionId && cam.armedSessionId !== s.id) throw new HttpError(409, 'camera_busy');
       writeSynced(tx, schema.cameras, { id: cameraId, armedSessionId: s.id, armedBy: user.id, armedAt: Date.now() });

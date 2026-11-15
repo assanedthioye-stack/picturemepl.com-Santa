@@ -140,7 +140,7 @@ export const orderItems = sqliteTable('order_items', {
   photoId: text('photo_id').references(() => photos.id),
   kind: text('kind', { enum: ['deposit', 'bundle', 'print', 'digital'] }).notNull(),
   /** For 'print' lines: the paid size, so a 4x6 slot can never come out as an 8x10. */
-  printSize: text('print_size', { enum: ['4x6', '5x7', '8x10', 'custom'] }),
+  printSize: text('print_size', { enum: ['4x6', '5x7', '8x10', 'wallet4', 'custom'] }),
   qty: integer('qty').notNull(),
   unitPriceXof: integer('unit_price_xof').notNull(),
   lineTotalXof: integer('line_total_xof').notNull(),
@@ -152,7 +152,7 @@ export const printJobs = sqliteTable('print_jobs', {
   boothId: text('booth_id').notNull(),
   orderItemId: text('order_item_id').notNull().references(() => orderItems.id),
   photoId: text('photo_id').notNull().references(() => photos.id),
-  printSize: text('print_size', { enum: ['4x6', '5x7', '8x10', 'custom'] }).notNull(),
+  printSize: text('print_size', { enum: ['4x6', '5x7', '8x10', 'wallet4', 'custom'] }).notNull(),
   /** Only for 'custom': short × long side in inches, e.g. "6x8". */
   customInches: text('custom_inches'),
   copies: integer('copies').notNull().default(1),
@@ -198,7 +198,9 @@ export const queueEntries = sqliteTable('queue_entries', {
 export const packages = sqliteTable('packages', {
   id: text('id').primaryKey(),
   eventId: text('event_id'),
-  code: text('code').notNull().unique(),
+  code: text('code').notNull(),
+  /** Prices differ per country: one row per (code, country). */
+  country: text('country', { enum: ['SN', 'BJ', 'CI'] }).notNull().default('SN'), // default only lets 0002 run on booths that already have rows
   nameFr: text('name_fr').notNull(),
   nameEn: text('name_en').notNull(),
   /** VAT-inclusive, whole XOF. */
@@ -206,11 +208,11 @@ export const packages = sqliteTable('packages', {
   /** Digital files included: -1 = every selected photo. */
   digitalsIncluded: integer('digitals_included').notNull().default(0),
   /** Prints included per size, e.g. {"4x6": 3, "8x10": 1}. */
-  prints: text('prints', { mode: 'json' }).$type<Partial<Record<'4x6' | '5x7' | '8x10' | 'custom', number>>>().notNull(),
+  prints: text('prints', { mode: 'json' }).$type<Partial<Record<'4x6' | '5x7' | '8x10' | 'wallet4' | 'custom', number>>>().notNull(),
   sort: integer('sort').notNull().default(0),
   active: integer('active', { mode: 'boolean' }).notNull().default(true),
   ...synced,
-});
+}, (t) => [uniqueIndex('packages_code_country').on(t.code, t.country)]);
 
 export const drawerSessions = sqliteTable('drawer_sessions', {
   id: text('id').primaryKey(),
@@ -232,7 +234,7 @@ export const drawerSessions = sqliteTable('drawer_sessions', {
 export const payments = sqliteTable('payments', {
   id: text('id').primaryKey(),
   orderId: text('order_id').notNull().references(() => orders.id),
-  method: text('method', { enum: ['cash', 'wave', 'orange_money', 'mtn_momo', 'card'] }).notNull(),
+  method: text('method', { enum: ['cash', 'wave', 'orange_money', 'mtn_momo', 'celtiis_cash', 'card'] }).notNull(),
   /** null for cash; 'manual' = cashier confirmed the customer's reference. */
   provider: text('provider', { enum: ['cinetpay', 'fedapay', 'manual'] }),
   idempotencyKey: text('idempotency_key').notNull().unique(),

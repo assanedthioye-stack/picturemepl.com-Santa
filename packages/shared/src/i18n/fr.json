@@ -127,5 +127,10 @@
   "err.tendered_too_low": "Montant reçu insuffisant",
   "err.reference_already_used": "Cette référence a déjà été utilisée",
   "err.pair_from_booth_pc_only": "L'appairage se fait depuis le PC de la cabine",
-  "err.no_lan_address": "Le PC n'est pas connecté au réseau de la cabine"
+  "err.no_lan_address": "Le PC n'est pas connecté au réseau de la cabine",
+  "pay.celtiis_cash": "Celtiis Cash",
+  "pos.wallets": "portefeuilles",
+  "pos.digital.one": "fichier numérique",
+  "pos.digital.all": "tous les fichiers numériques",
+  "pos.digital.over": "Trop de photos numériques choisies"
 }

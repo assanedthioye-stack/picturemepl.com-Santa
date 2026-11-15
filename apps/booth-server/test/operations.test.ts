@@ -80,52 +80,64 @@ describe('booth day: host → photographer → cashier', () => {
     expect((await host.get('/api/pos/families')).status).toBe(403);
   });
 
-  it('cashier: combo order, cash with drawer, prints + uploads queued', async () => {
+  it('cashier: Famille package, cash with drawer, prints + wallets + upload queued', async () => {
     const families = await (await cashier.get('/api/pos/families')).json();
     expect(families).toHaveLength(1);
     expect(families[0]).toMatchObject({ familyName: 'Famille Kouassi', photoCount: 3 });
     expect((await cashier.post(`/api/pos/families/${familyBookingId}/show`)).status).toBe(200);
 
     const pkgs = await (await cashier.get('/api/pos/packages')).json();
-    expect(pkgs.map((p: any) => p.code)).toEqual(['digital', 'dnp_4x6', 'pixma_8x10', 'combo']);
-    const combo = pkgs.find((p: any) => p.code === 'combo');
+    // Senegal column of the October 2026 price list.
+    expect(pkgs.map((p: any) => [p.code, p.priceXof])).toEqual([
+      ['essentiel', 7_500], ['famille', 10_000], ['prestige', 18_000], ['numerique', 5_000],
+      ['tirage_20x25', 3_500], ['tirage_13x18', 2_500], ['tirages_10x15', 1_500], ['portefeuille', 1_500],
+    ]);
+    const famille = pkgs.find((p: any) => p.code === 'famille');
     const photos = (await (await cashier.get(`/api/pos/families/${familyBookingId}/photos`)).json()).map((p: any) => p.id);
+    const [a, b, c] = photos;
+    // Famille: 1 × 20×25, 2 × 13×18, 2 × 10×15, 8 wallets (2 sheets), 1 digital file.
+    const slots = [['8x10', a], ['5x7', a], ['5x7', b], ['4x6', b], ['4x6', b], ['wallet4', c], ['wallet4', c]].map(([size, photoId]) => ({ size, photoId }));
 
-    const wrong = await cashier.post('/api/pos/orders', { bookingId: familyBookingId, lines: [{ packageId: combo.id, qty: 1 }], digitalPhotoIds: photos, printSlots: [] });
-    expect((await wrong.json()).error).toMatch(/print_slots_mismatch/);
+    const tooMany = await cashier.post('/api/pos/orders', { bookingId: familyBookingId, lines: [{ packageId: famille.id, qty: 1 }], digitalPhotoIds: [a, b], printSlots: slots });
+    expect((await tooMany.json()).error).toBe('too_many_digitals');
+    const noWallets = await cashier.post('/api/pos/orders', { bookingId: familyBookingId, lines: [{ packageId: famille.id, qty: 1 }], digitalPhotoIds: [a], printSlots: slots.slice(0, 5) });
+    expect((await noWallets.json()).error).toBe('print_slots_mismatch_wallet4');
 
-    const orderRes = await cashier.post('/api/pos/orders', {
-      bookingId: familyBookingId, lines: [{ packageId: combo.id, qty: 1 }], digitalPhotoIds: photos,
-      printSlots: [{ size: '4x6', photoId: photos[0] }, { size: '4x6', photoId: photos[0] }, { size: '4x6', photoId: photos[1] }, { size: '8x10', photoId: photos[2] }],
-    });
-    const order = await orderRes.json();
-    expect(order).toMatchObject({ totalXof: 25_000, vatXof: 3814, status: 'open' }); // 25000 × 18/118
+    const order = await (await cashier.post('/api/pos/orders', {
+      bookingId: familyBookingId, lines: [{ packageId: famille.id, qty: 1 }], digitalPhotoIds: [a], printSlots: slots,
+    })).json();
+    expect(order).toMatchObject({ totalXof: 10_000, vatXof: 1525, status: 'open' }); // 10000 × 18/118
 
-    expect((await (await cashier.post(`/api/pos/orders/${order.id}/pay`, { method: 'cash', tenderedXof: 30_000 })).json()).error).toBe('drawer_closed');
+    expect((await (await cashier.post(`/api/pos/orders/${order.id}/pay`, { method: 'cash', tenderedXof: 15_000 })).json()).error).toBe('drawer_closed');
     expect((await cashier.post('/api/pos/drawer/open', { openingFloatXof: 5_000 })).status).toBe(201);
-    expect((await (await cashier.post(`/api/pos/orders/${order.id}/pay`, { method: 'cash', tenderedXof: 20_000 })).json()).error).toBe('tendered_too_low');
-    const paid = await (await cashier.post(`/api/pos/orders/${order.id}/pay`, { method: 'cash', tenderedXof: 30_000 })).json();
+    expect((await (await cashier.post(`/api/pos/orders/${order.id}/pay`, { method: 'cash', tenderedXof: 9_000 })).json()).error).toBe('tendered_too_low');
+    const paid = await (await cashier.post(`/api/pos/orders/${order.id}/pay`, { method: 'cash', tenderedXof: 15_000 })).json();
     expect(paid.changeXof).toBe(5_000);
-    expect((await cashier.post(`/api/pos/orders/${order.id}/pay`, { method: 'cash', tenderedXof: 30_000 })).status).toBe(409);
+    expect((await cashier.post(`/api/pos/orders/${order.id}/pay`, { method: 'cash', tenderedXof: 15_000 })).status).toBe(409);
 
-    // Prints: photo 0 ×2 (one job, 2 copies) + photo 1 on the DNP, photo 2 on the PIXMA.
-    await until(() => t.printed.length === 3);
+    // One job per (size, photo): 20×25 on the PIXMA; 13×18 ×2, 10×15 (2 copies) and the wallet sheets (2 copies) on the DNP.
+    await until(() => t.printed.length === 5);
     expect(t.printed.map((p) => [p.o.printer, p.o.copies]).sort()).toEqual([
-      ['Canon PIXMA TS8320', 1], ['DNP DS620A', 1], ['DNP DS620A', 2],
+      ['Canon PIXMA TS8320', 1], ['DNP DS620A', 1], ['DNP DS620A', 1], ['DNP DS620A', 2], ['DNP DS620A', 2],
     ]);
     const uploads = t.booth.db.select().from(schema.uploadJobs).all();
-    expect(uploads.map((u) => [u.kind, u.priority, u.status])).toEqual(Array(3).fill(['deliverable', 10, 'queued']));
+    expect(uploads.map((u) => [u.photoId, u.kind, u.priority, u.status])).toEqual([[a, 'deliverable', 10, 'queued']]);
     expect((await (await cashier.get('/api/pos/families')).json())).toHaveLength(0);
+    // Paid: gone from the shoot list, and cannot be re-armed.
+    const sessions = await (await ph.get('/api/sessions')).json();
+    expect(sessions.some((s: any) => s.bookingId === familyBookingId)).toBe(false);
+    const done = t.booth.db.select().from(schema.photoSessions).where(eq(schema.photoSessions.bookingId, familyBookingId)).get()!;
+    expect((await (await ph.post(`/api/sessions/${done.id}/arm`)).json()).error).toBe('booking_completed');
 
     // The paid 4x6 lines cannot be reprinted as 8x10 through the manual endpoint.
     const line = t.booth.db.select().from(schema.orderItems).where(eq(schema.orderItems.printSize, '4x6')).get()!;
     expect((await cashier.post('/api/print-jobs', { orderItemId: line.id, photoId: line.photoId, size: '8x10', copies: 1 })).status).toBe(409);
 
-    const closed = await (await cashier.post('/api/pos/drawer/close', { countedXof: 29_500 })).json();
-    expect(closed).toEqual({ expectedXof: 30_000, countedXof: 29_500, varianceXof: -500 });
+    const closed = await (await cashier.post('/api/pos/drawer/close', { countedXof: 14_500 })).json();
+    expect(closed).toEqual({ expectedXof: 15_000, countedXof: 14_500, varianceXof: -500 });
   });
 
-  it('Mobile Money: needs a reference, and a reference works only once', async () => {
+  it('Mobile Money: country methods only, needs a reference, a reference works once', async () => {
     // Shoot a second family quickly.
     const [next] = await (await host.get('/api/queue')).json();
     const session = await (await host.post(`/api/queue/${next.id}/send`)).json();
@@ -136,10 +148,13 @@ describe('booth day: host → photographer → cashier', () => {
     await ph.post(`/api/sessions/${session.id}/complete`);
 
     const pkgs = await (await cashier.get('/api/pos/packages')).json();
-    const digital = pkgs.find((p: any) => p.code === 'digital');
+    const digital = pkgs.find((p: any) => p.code === 'numerique');
     const photos = (await (await cashier.get(`/api/pos/families/${next.bookingId}/photos`)).json()).map((p: any) => p.id);
-    const order = await (await cashier.post('/api/pos/orders', { bookingId: next.bookingId, lines: [{ packageId: digital.id, qty: 1 }], digitalPhotoIds: photos, printSlots: [] })).json();
+    const order = await (await cashier.post('/api/pos/orders', { bookingId: next.bookingId, lines: [{ packageId: digital.id, qty: 1 }], digitalPhotoIds: photos.slice(0, 1), printSlots: [] })).json();
+    expect(order.totalXof).toBe(5_000);
     expect((await cashier.post(`/api/pos/orders/${order.id}/pay`, { method: 'wave', reference: 'x' })).status).toBe(400);
+    // Senegal takes Orange Money and Wave, not MTN MoMo (Benin).
+    expect((await (await cashier.post(`/api/pos/orders/${order.id}/pay`, { method: 'mtn_momo', reference: 'MP123456' })).json()).error).toBe('method_not_offered');
     expect((await cashier.post(`/api/pos/orders/${order.id}/pay`, { method: 'wave', reference: 'T_ABC123' })).status).toBe(200);
     const p = t.booth.db.select().from(schema.payments).where(eq(schema.payments.providerTxId, 'T_ABC123')).get()!;
     expect([p.provider, p.status, p.drawerSessionId]).toEqual(['manual', 'succeeded', null]);
@@ -151,5 +166,34 @@ describe('booth day: host → photographer → cashier', () => {
     const photo = writeSynced(t.booth.db, schema.photos, { id: uuidv7(), sessionId: s2.id, bookingId: other.id, seq: 1, originalName: 'a.jpg', fileName: 'a.jpg', sha256: 'h', ingestStatus: 'ready' });
     const o2 = await (await cashier.post('/api/pos/orders', { bookingId: other.id, lines: [{ packageId: digital.id, qty: 1 }], digitalPhotoIds: [photo.id], printSlots: [] })).json();
     expect((await (await cashier.post(`/api/pos/orders/${o2.id}/pay`, { method: 'wave', reference: 'T_ABC123' })).json()).error).toBe('reference_already_used');
+  });
+});
+
+describe('price list per country', () => {
+  it('a Benin booth sells Benin prices and takes MTN MoMo / Celtiis Cash', async () => {
+    const bj = await makeBooth(() => ({ PMP_COUNTRY: 'BJ' }));
+    try {
+      const c = bj.client();
+      await c.login((await bj.addUser('cashier')).id);
+      const me = await (await c.get('/api/auth/me')).json();
+      expect(me.boothCountry).toBe('BJ');
+      const pkgs = await (await c.get('/api/pos/packages')).json();
+      expect(pkgs.slice(0, 4).map((p: any) => [p.code, p.priceXof])).toEqual([['essentiel', 6_500], ['famille', 8_500], ['prestige', 15_500], ['numerique', 4_500]]);
+      expect(pkgs.every((p: any) => p.country === 'BJ')).toBe(true);
+    } finally {
+      await bj.close();
+    }
+  });
+
+  it('retires old packages when the price list changes', async () => {
+    const { seedPackages } = await import('../src/routes/pos');
+    const { setSetting } = await import('@pmp/db');
+    const db = t.booth.db;
+    writeSynced(db, schema.packages, { id: uuidv7(), code: 'combo', country: 'SN', nameFr: 'Combo', nameEn: 'Combo', priceXof: 25_000, prints: {} });
+    setSetting(db, 'packages.version', 'placeholder');
+    seedPackages(db);
+    const active = db.select().from(schema.packages).where(eq(schema.packages.active, true)).all();
+    expect(active.some((p) => p.code === 'combo')).toBe(false);
+    expect(active).toHaveLength(8 * 3); // 8 items × SN/CI/BJ
   });
 });

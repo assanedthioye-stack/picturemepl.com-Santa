@@ -16,7 +16,7 @@ export function Host({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav?: 
   const [scanning, setScanning] = useState(false);
   const [code, setCode] = useState('');
   const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
-  const [walkIn, setWalkIn] = useState({ fullName: '', phone: '', country: 'SN' as Country, partySize: 2 });
+  const [walkIn, setWalkIn] = useState({ fullName: '', phone: '', country: me.boothCountry as Country, partySize: 2 });
   const [added, setAdded] = useState<{ bookingCode: string; pin: string } | null>(null);
   const [now, setNow] = useState(Date.now());
 

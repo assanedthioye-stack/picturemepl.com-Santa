@@ -127,5 +127,10 @@
   "err.tendered_too_low": "Not enough cash received",
   "err.reference_already_used": "This reference was already used",
   "err.pair_from_booth_pc_only": "Pairing is done from the booth PC",
-  "err.no_lan_address": "The PC is not connected to the booth network"
+  "err.no_lan_address": "The PC is not connected to the booth network",
+  "pay.celtiis_cash": "Celtiis Cash",
+  "pos.wallets": "wallets",
+  "pos.digital.one": "digital file",
+  "pos.digital.all": "all digital files",
+  "pos.digital.over": "Too many digital photos selected"
 }

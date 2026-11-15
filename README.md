@@ -79,7 +79,26 @@ The kiosk window opens full-screen on the first non-primary display (`PMP_KIOSK_
    - **Mobile Money** (Wave, Orange Money, MTN MoMo): the customer pays the booth's merchant number on their phone and shows the receipt; the cashier types the transaction reference. A reference is accepted once. Automatic push/confirmation via CinetPay/FedaPay needs the cloud webhook (Phase 3).
    - Payment confirmed → print jobs go to the print router, purchased originals go to `upload_jobs` (drained by the Phase 3 uploader).
 
-**Prices are placeholders** (seeded on first start): Pack numérique 10 000, 3 × 10×15 7 500, 2 × 20×25 15 000, Combo 25 000 F CFA. Change them in the `packages` table before launch; the Admin screen comes in Phase 3.
+**Prices** come from the official list "Tarifs par pays", October 2026 (`apps/booth-server/src/pos/pricing.ts`). Each booth sells its own country's column, set once per PC:
+
+```bat
+setx PMP_COUNTRY "CI"
+```
+
+(`SN` default, `CI`, `BJ`; restart the app.) The country also picks the Mobile Money methods: Orange Money and Wave in Senegal and Côte d'Ivoire, MTN MoMo and Celtiis Cash in Benin. Cash is accepted everywhere.
+
+| Formule | Contenu (as printed by the booth) | SN | CI | BJ |
+|---|---|---|---|---|
+| Essentiel | 1 × 13×18, 2 × 10×15, 4 portefeuilles, 1 fichier | 7 500 | 9 000 | 6 500 |
+| Famille | 1 × 20×25, 2 × 13×18, 2 × 10×15, 8 portefeuilles, 1 fichier | 10 000 | 12 000 | 8 500 |
+| Prestige | 2 × 20×25, 2 × 13×18, 4 × 10×15, 8 portefeuilles, tous les fichiers | 18 000 | 21 500 | 15 500 |
+| Numérique | 1 fichier | 5 000 | 6 000 | 4 500 |
+| Tirage 20×25 / 13×18 / 2 × 10×15 / 8 portefeuilles | à l'unité | 3 500 / 2 500 / 1 500 / 1 500 | 4 000 / 3 500 / 2 000 / 2 000 | 3 000 / 2 500 / 1 500 / 1 500 |
+
+- **Wallets** ("format portefeuille", 6×9 cm) print 4 to a 13×18 sheet (2.5×3.5 in each) on the DNP, using the 13×18 queue/paper settings. 4 wallets = 1 sheet, 8 = 2 sheets. No cut marks: trim on the guillotine.
+- Not sold at the booth: *Photo de classe* and *Mosaïque de classe* (school products).
+- Prestige's *retouche premium* is done by hand outside the app; the background of choice ("sur le fond de votre choix") is not supported by the booth.
+- On the first start after an update, the new price list replaces the old one; earlier packages stay in the database, inactive, so past orders keep their references.
 
 ## Tablets on the LAN
 

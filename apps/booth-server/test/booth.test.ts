@@ -177,6 +177,7 @@ describe('printer resolution', () => {
     setSetting(t.booth.db, 'print.printer.5x7', 'DNP DS620A 5x7');
     setSetting(t.booth.db, 'print.paper.5x7', '(5x7)');
     expect(resolvePrinter(t.booth.db, '5x7', installed)).toEqual({ printer: 'DNP DS620A 5x7', paperSize: '(5x7)' });
+    expect(resolvePrinter(t.booth.db, 'wallet4', installed)).toEqual({ printer: 'DNP DS620A 5x7', paperSize: '(5x7)' }); // same media
     expect(() => resolvePrinter(t.booth.db, '4x6', ['Microsoft Print to PDF'])).toThrow('printer_not_found:DS620');
   });
 });

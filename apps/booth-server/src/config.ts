@@ -1,5 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
+import { COUNTRIES, type Country } from '@pmp/shared';
 
 export interface Config {
   /** Internal disk: database + print spool. Never point this at a removable drive. */
@@ -24,6 +25,8 @@ export interface Config {
   lan: boolean;
   /** Per-boot secret handed by Electron main to the kiosk window only. */
   kioskToken: string;
+  /** Sets prices, Mobile Money methods and the walk-in phone default. */
+  country: Country;
   /** Force a camera driver ('edsdk' | 'wia' | 'mock'); otherwise the camera row decides. */
   cameraDriver: string | null;
 }
@@ -31,6 +34,8 @@ export interface Config {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const root = env.PMP_ROOT ?? (process.platform === 'win32' ? 'C:\\PhotoBooth' : path.join(os.homedir(), 'PhotoBooth'));
   if (!env.PMP_KIOSK_TOKEN || env.PMP_KIOSK_TOKEN.length < 32) throw new Error('PMP_KIOSK_TOKEN missing or too short');
+  const country = (env.PMP_COUNTRY ?? 'SN').toUpperCase();
+  if (!(country in COUNTRIES)) throw new Error(`PMP_COUNTRY must be one of ${Object.keys(COUNTRIES).join(', ')}`);
   const photosDir = env.PMP_PHOTOS_DIR ?? root;
   const mirrorDir = env.PMP_MIRROR_DIR || null;
   if (mirrorDir && isSameOrInside(mirrorDir, photosDir)) throw new Error('PMP_MIRROR_DIR must be outside PMP_PHOTOS_DIR');
@@ -52,6 +57,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     lan: env.PMP_LAN !== '0',
     kioskToken: env.PMP_KIOSK_TOKEN,
     cameraDriver: env.PMP_CAMERA_DRIVER ?? null,
+    country: country as Country,
   };
 }
 

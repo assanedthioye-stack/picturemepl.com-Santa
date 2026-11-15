@@ -15,6 +15,13 @@
       "when": 1794771505264,
       "tag": "0001_booth_ops",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1794772822081,
+      "tag": "0002_country_prices",
+      "breakpoints": true
     }
   ]
 }

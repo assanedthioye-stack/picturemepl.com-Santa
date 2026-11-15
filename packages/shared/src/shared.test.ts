@@ -29,6 +29,7 @@ describe('print routes', () => {
     expect(PRINT_ROUTES['5x7']).toBe('dnp');
     expect(PRINT_ROUTES['8x10']).toBe('pixma');
     expect(PRINT_ROUTES.custom).toBe('pixma');
+    expect(PRINT_ROUTES.wallet4).toBe('dnp');
   });
 });
 

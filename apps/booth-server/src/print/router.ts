@@ -3,7 +3,7 @@ import { mkdirSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { and, eq, inArray } from 'drizzle-orm';
 import { getSetting, schema, writeSynced, type Db } from '@pmp/db';
-import { PRINT_ROUTES, type PrinterKey, type PrintSize } from '@pmp/shared';
+import { PRINT_ROUTES, PRINT_TILES, type PrinterKey, type PrintSize } from '@pmp/shared';
 import type { EventHub } from '../events';
 import { sessionDir } from '../photos/ingest';
 import { buildPrintPdf, parseInches } from './layout';
@@ -41,12 +41,13 @@ const DEFAULT_PRINTER_MATCH: Record<PrinterKey, string> = { dnp: 'DS620', pixma:
  */
 export function resolvePrinter(db: Db, size: PrintSize, installed: string[]): { printer: string; paperSize?: string } {
   const key = PRINT_ROUTES[size];
-  const want = getSetting(db, `print.printer.${size}`) ?? getSetting(db, `print.printer.${key}`) ?? DEFAULT_PRINTER_MATCH[key];
+  const media = size === 'wallet4' ? '5x7' : size; // wallet sheets use the 5x7 media/queue
+  const want = getSetting(db, `print.printer.${media}`) ?? getSetting(db, `print.printer.${key}`) ?? DEFAULT_PRINTER_MATCH[key];
   const lower = want.toLowerCase();
   const printer = installed.find((n) => n.toLowerCase() === lower)
     ?? installed.filter((n) => n.toLowerCase().includes(lower)).sort((a, b) => a.length - b.length)[0];
   if (!printer) throw new Error(`printer_not_found:${want}`);
-  return { printer, paperSize: getSetting(db, `print.paper.${size}`) };
+  return { printer, paperSize: getSetting(db, `print.paper.${media}`) };
 }
 
 const MAX_ATTEMPTS = 3;
@@ -99,7 +100,7 @@ export class PrintQueue {
       const { printer, paperSize } = resolvePrinter(db, job.printSize, await spooler.listPrinters());
       this.update(job.id, { status: 'printing', printerName: printer, attempts: job.attempts + 1 });
       const src = path.join(sessionDir(this.o.sessionsDir, photo.sessionId), photo.fileName);
-      const { landscape } = await buildPrintPdf(src, pdf, parseInches(job.printSize, job.customInches));
+      const { landscape } = await buildPrintPdf(src, pdf, parseInches(job.printSize, job.customInches), PRINT_TILES[job.printSize]);
       await spooler.print(pdf, { printer, paperSize, orientation: landscape ? 'landscape' : 'portrait', copies: job.copies });
       this.update(job.id, { status: 'done', printedAt: Date.now(), lastError: null });
     } catch (e) {

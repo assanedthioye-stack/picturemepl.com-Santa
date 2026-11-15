@@ -1,18 +1,17 @@
 import { Router } from 'express';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { getSetting, schema, writeSynced, type Db } from '@pmp/db';
-import { PRINT_SIZES } from '@pmp/shared';
+import { getSetting, schema, setSetting, writeSynced, type Db } from '@pmp/db';
+import { COUNTRIES, MOMO_METHODS, PRINT_SIZES } from '@pmp/shared';
 import type { Deps } from '../app';
 import { audit } from '../audit';
 import { requirePerm, staffOf } from '../auth/auth';
 import { HttpError } from '../http';
 import { uuidv7 } from '../ids';
 import { toDto } from '../photos/ingest';
-import { DEFAULT_PACKAGES, priceCart, type Pkg } from '../pos/pricing';
+import { PRICE_LIST, PRICE_LIST_VERSION, priceCart, type Pkg } from '../pos/pricing';
 import { kioskState, setKioskSession } from './kiosk';
 
-const MOMO = ['wave', 'orange_money', 'mtn_momo'] as const;
 
 const NewOrder = z.object({
   bookingId: z.string().min(1),
@@ -22,14 +21,26 @@ const NewOrder = z.object({
 });
 const Pay = z.discriminatedUnion('method', [
   z.object({ method: z.literal('cash'), tenderedXof: z.number().int().min(0).max(100_000_000) }),
-  z.object({ method: z.enum(MOMO), reference: z.string().trim().min(4).max(64), payerPhone: z.string().max(25).optional() }),
+  z.object({ method: z.enum(MOMO_METHODS), reference: z.string().trim().min(4).max(64), payerPhone: z.string().max(25).optional() }),
 ]);
 const OpenDrawer = z.object({ openingFloatXof: z.number().int().min(0).max(100_000_000) });
 const CloseDrawer = z.object({ countedXof: z.number().int().min(0).max(100_000_000) });
 
+/** Installs the official price list once per version; older packages stay in the DB (history) but inactive. */
 export function seedPackages(db: Db): void {
-  if (db.select({ id: schema.packages.id }).from(schema.packages).limit(1).get()) return;
-  for (const p of DEFAULT_PACKAGES) writeSynced(db, schema.packages, { id: uuidv7(), ...p, prints: { ...p.prints } });
+  if (getSetting(db, 'packages.version') === PRICE_LIST_VERSION) return;
+  // shortcut: replaces every package, which is right while prices only come from code; the Phase 3 Admin screen must own this instead
+  db.transaction((tx) => {
+    for (const old of tx.select().from(schema.packages).all()) writeSynced(tx, schema.packages, { id: old.id, active: false });
+    for (const { price, ...p } of PRICE_LIST) {
+      for (const country of Object.keys(COUNTRIES) as Array<keyof typeof COUNTRIES>) {
+        const existing = tx.select({ id: schema.packages.id }).from(schema.packages)
+          .where(and(eq(schema.packages.code, p.code), eq(schema.packages.country, country))).get();
+        writeSynced(tx, schema.packages, { id: existing?.id ?? uuidv7(), ...p, prints: { ...p.prints }, country, priceXof: price[country], active: true });
+      }
+    }
+    setSetting(tx as unknown as Db, 'packages.version', PRICE_LIST_VERSION);
+  });
 }
 
 const vatBp = (db: Db) => Number(getSetting(db, 'tax.vat_bp') ?? 1800); // SN, BJ and CI all charge 18 % VAT
@@ -39,12 +50,13 @@ function openDrawer(db: Db, boothId: string) {
     .where(and(eq(schema.drawerSessions.boothId, boothId), eq(schema.drawerSessions.status, 'open'))).get();
 }
 
-export function posRoutes({ db, hub, boothId, printQueue }: Deps): Router {
+export function posRoutes({ db, hub, boothId, printQueue, config }: Deps): Router {
   const r = Router();
+  const forBooth = and(eq(schema.packages.active, true), eq(schema.packages.country, config.country));
   const P = schema.photos;
 
   r.get('/api/pos/packages', requirePerm('payment.take'), (_req, res) => {
-    res.json(db.select().from(schema.packages).where(eq(schema.packages.active, true)).orderBy(schema.packages.sort).all());
+    res.json(db.select().from(schema.packages).where(forBooth).orderBy(schema.packages.sort).all());
   });
 
   // Families whose shoot is finished and who have not paid yet.
@@ -83,7 +95,7 @@ export function posRoutes({ db, hub, boothId, printQueue }: Deps): Router {
     if (!booking || booking.boothId !== boothId) throw new HttpError(404, 'booking_not_found');
     if (booking.status !== 'shot_complete') throw new HttpError(409, `booking_${booking.status}`);
     const pkgs = new Map<string, Pkg & { code: string }>(db.select().from(schema.packages)
-      .where(eq(schema.packages.active, true)).all().map((p) => [p.id, p]));
+      .where(forBooth).all().map((p) => [p.id, p]));
     const photoIds = new Set(db.select({ id: P.id }).from(P)
       .where(and(eq(P.bookingId, booking.id), eq(P.ingestStatus, 'ready'), eq(P.hidden, false))).all().map((p) => p.id));
     const rate = vatBp(db);
@@ -135,6 +147,7 @@ export function posRoutes({ db, hub, boothId, printQueue }: Deps): Router {
         if (body.tenderedXof < order.totalXof) throw new HttpError(400, 'tendered_too_low');
         drawerId = drawer.id;
       } else {
+        if (!(COUNTRIES[config.country].momo as readonly string[]).includes(body.method)) throw new HttpError(400, 'method_not_offered');
         const dup = tx.select({ id: schema.payments.id }).from(schema.payments)
           .where(and(eq(schema.payments.method, body.method), eq(schema.payments.providerTxId, body.reference))).get();
         if (dup) throw new HttpError(409, 'reference_already_used');
