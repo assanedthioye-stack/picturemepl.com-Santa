@@ -8,18 +8,25 @@
   <div><label data-t="slot_len"></label><input id="len" type="number" value="15" min="5" max="240"></div><div><label data-t="per_slot"></label><input id="cap" type="number" value="2" min="1" max="100"></div></div>
   <button id="mk" data-t="create_slots"></button><p id="smsg"></p></div>
 <div class="card"><h2 data-t="sales"></h2><input id="sd" type="date"><div id="sales"></div></div>
-<div class="card"><h2 data-t="prices"></h2><select id="pc"><option>SN</option><option>CI</option><option>BJ</option></select><select id="pi"></select><input id="pa" type="number" data-tp="amount"><button id="sp" data-t="save"></button><p id="pmsg"></p></div>
+<details class="card" id="priceBox"><summary><b data-t="prices_auto"></b></summary><div id="prices"></div><p id="pmsg"></p></details>
 <div class="card"><h2 data-t="add_mall"></h2><input id="mname" data-tp="name"><select id="mcountry"><option value="SN">Sénégal</option><option value="CI">Côte d'Ivoire</option><option value="BJ">Bénin</option></select><button id="addmall" data-t="save"></button><p id="mmsg"></p></div>
 </main><style>.filters2{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:8px 0}.filters2>*{min-width:0}</style>
 <script src="/app.js"></script><script>
 const day = (d) => d.toISOString().slice(0, 10);
 $('#from').value = day(new Date()); $('#to').value = day(new Date(Date.now() + 6 * 86400000)); $('#sd').value = day(new Date());
-$('#pi').innerHTML = ['essentiel','famille','prestige','numerique','print_8x10','print_5x7','print_4x6','wallet','digital'].map((i) => `<option>${i}</option>`).join('');
+const ITEMS = ['essentiel', 'famille', 'prestige', 'numerique', 'print_8x10', 'print_5x7', 'print_4x6', 'wallet', 'digital'];
+let MALLS = [], PRICES = [];
 const mallId = () => $('#mallsel').value;
+const country = () => MALLS.find((m) => String(m.id) === mallId())?.country;
+async function showPrices() { // the official price list is pre-loaded per country; inputs only matter if a price changes
+  PRICES = await (await fetch('/api/prices')).json();
+  const c = country();
+  $('#prices').innerHTML = ITEMS.map((i) => `<div class="item"><span>${t(i)}</span><span><input data-item="${i}" type="number" min="0" step="100" style="width:130px" value="${PRICES.find((p) => p.country === c && p.item === i)?.amount ?? ''}"> F</span></div>`).join('');
+}
 async function malls(keep) {
-  const m = await (await fetch('/api/malls')).json();
+  const m = MALLS = await (await fetch('/api/malls')).json();
   $('#mallsel').innerHTML = m.map((x) => `<option value="${x.id}">${esc(x.name)} (${x.country})</option>`).join('');
-  if (keep) $('#mallsel').value = keep; sales();
+  if (keep) $('#mallsel').value = keep; sales(); showPrices();
 }
 $('#mk').onclick = async () => {
   try { const r = await api('POST', '/api/admin/slots/bulk', { mall: mallId(), fromDay: $('#from').value, toDay: $('#to').value, open: $('#open').value, close: $('#close').value, minutes: $('#len').value, capacity: $('#cap').value });
@@ -27,8 +34,11 @@ $('#mk').onclick = async () => {
   catch (e) { $('#smsg').textContent = errText(e.message === 'bad slots' ? 'bad_slots' : e.message); $('#smsg').className = 'err'; }
 };
 $('#addmall').onclick = async () => { try { await api('POST', '/api/admin/malls', { name: $('#mname').value, country: $('#mcountry').value }); $('#mmsg').textContent = 'OK'; $('#mname').value = ''; malls(mallId()); } catch (e) { $('#mmsg').textContent = errText(e.message === 'bad mall' ? 'bad_mall' : e.message); } };
-$('#sp').onclick = async () => { try { await api('PUT', '/api/admin/prices', { country: $('#pc').value, item: $('#pi').value, amount: +$('#pa').value }); $('#pmsg').textContent = 'OK'; } catch (e) { $('#pmsg').textContent = errText(e.message); } };
+$('#prices').addEventListener('change', async (e) => {
+  try { await api('PUT', '/api/admin/prices', { country: country(), item: e.target.dataset.item, amount: +e.target.value }); $('#pmsg').textContent = t(e.target.dataset.item) + ' ✓'; $('#pmsg').className = 'good'; }
+  catch (err) { $('#pmsg').textContent = errText(err.message); $('#pmsg').className = 'err'; }
+});
 async function sales() { if (!mallId()) return; try { const s = await api('GET', `/api/admin/sales?mall=${mallId()}&day=${$('#sd').value}`);
   $('#sales').innerHTML = `<div class="tot">${xof(s.total)}</div>` + Object.entries({ ...s.byMethod, ...s.byProvider }).map(([k, v]) => `<div class="item"><span>${I.fr[k] || k}</span><span>${xof(v)}</span></div>`).join(''); } catch (e) {} }
-$('#sd').onchange = sales; $('#mallsel').onchange = sales; window.render = sales; applyI18n(); malls(); setInterval(sales, 10000);
+$('#sd').onchange = sales; $('#mallsel').onchange = () => { sales(); showPrices(); }; window.render = sales; applyI18n(); malls(); setInterval(sales, 10000);
 </script></body></html>

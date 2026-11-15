@@ -151,3 +151,26 @@ test('admin creates a whole day of slots from one simple form, and families can 
     assert.equal(await b.locator('#slots button').count(), 4);
   } finally { await browser.close(); srv.close(); }
 });
+
+test('admin shows the price list pre-filled for the mall country; editing a price saves on change', async () => {
+  const db = openDb();
+  db.prepare("INSERT INTO malls(id,name,country) VALUES(1,'Cotonou','BJ'),(2,'Dakar','SN')").run();
+  const srv = createServer({ db, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'pmp-')), pins: PINS });
+  await new Promise((r) => srv.listen(0, r));
+  const browser = await chromium.launch();
+  try {
+    const p = await browser.newPage({ viewport: { width: 390, height: 1100 } });
+    p.on('dialog', (d) => d.accept('a1'));
+    await p.goto('http://localhost:' + srv.address().port + '/admin.html');
+    await p.selectOption('#mallsel', '1');
+    await p.click('#priceBox summary');
+    await p.waitForFunction(() => document.querySelector('input[data-item="famille"]')?.value === '8500'); // Benin, from the official sheet
+    await p.selectOption('#mallsel', '2');
+    await p.waitForFunction(() => document.querySelector('input[data-item="famille"]')?.value === '10000'); // Senegal
+    await p.fill('input[data-item="famille"]', '11000');
+    await p.dispatchEvent('input[data-item="famille"]', 'change');
+    await p.waitForFunction(() => document.querySelector('#pmsg').textContent.includes('✓'));
+    assert.equal(db.prepare("SELECT amount a FROM prices WHERE country='SN' AND item='famille'").get().a, 11000);
+    assert.equal(db.prepare("SELECT amount a FROM prices WHERE country='BJ' AND item='famille'").get().a, 8500);
+  } finally { await browser.close(); srv.close(); }
+});
