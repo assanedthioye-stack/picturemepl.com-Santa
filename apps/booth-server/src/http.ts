@@ -21,7 +21,8 @@ export function errorHandler(err: unknown, _req: Request, res: Response, next: N
 /** CSRF hardening on top of SameSite=Strict: browsers cannot send JSON cross-site without a CORS preflight. */
 export function requireJson(req: Request, res: Response, next: NextFunction) {
   if (req.method !== 'GET' && req.method !== 'HEAD' && req.path.startsWith('/api/') && !req.is('application/json')) {
-    return res.status(415).json({ error: 'json_required' });
+    res.status(415).json({ error: 'json_required' });
+    return;
   }
   next();
 }

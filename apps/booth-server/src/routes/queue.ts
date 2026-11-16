@@ -88,10 +88,12 @@ export function queueRoutes({ db, hub, boothId, config, syncNow }: Deps): Router
         writeSynced(db, Q, { id: existing.id, status: 'waiting', sortAt: now, enqueuedAt: now });
         audit(db, boothId, { action: 'queue.rejoin', actorId: user.id, actorRole: user.role, entity: 'booking', entityId: b.id });
         changed();
-        return res.status(201).json({ entryId: existing.id, alreadyCheckedIn: false });
+        res.status(201).json({ entryId: existing.id, alreadyCheckedIn: false });
+        return;
       }
       if (existing.status === 'done') throw new HttpError(409, `booking_${b.status}`);
-      return res.json({ entryId: existing.id, alreadyCheckedIn: true });
+      res.json({ entryId: existing.id, alreadyCheckedIn: true });
+      return;
     }
     if (b.status === 'pending_payment') throw new HttpError(409, 'booking_unpaid');
     if (b.status !== 'confirmed') throw new HttpError(409, `booking_${b.status}`);

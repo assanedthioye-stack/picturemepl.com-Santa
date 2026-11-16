@@ -105,9 +105,9 @@ export function authenticate(db: Db, kioskToken: string) {
 export function requirePerm(...perms: Permission[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     const p = req.principal;
-    if (!p) return res.status(401).json({ error: 'unauthenticated' });
+    if (!p) { res.status(401).json({ error: 'unauthenticated' }); return; }
     const who = p.kind === 'kiosk' ? 'kiosk' : p.user.role;
-    if (!perms.some((perm) => can(who, perm))) return res.status(403).json({ error: 'forbidden' });
+    if (!perms.some((perm) => can(who, perm))) { res.status(403).json({ error: 'forbidden' }); return; }
     next();
   };
 }

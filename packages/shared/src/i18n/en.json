@@ -139,6 +139,7 @@
   "pay.momo.send": "Send payment request",
   "pay.momo.scan": "The customer scans this code (also on the family screen) and pays on their phone.",
   "pay.momo.push": "The customer approves the payment on their phone.",
+  "pay.momo.unknown": "No answer from the network: checking. If nothing changes, cancel and try again.",
   "pay.momo.waiting": "Waiting for the operator's confirmation…",
   "pay.verify.ref": "Transaction ID (customer's SMS, optional)",
   "pay.verify": "Verify transaction",

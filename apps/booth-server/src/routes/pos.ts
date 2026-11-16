@@ -89,7 +89,8 @@ export function posRoutes({ db, hub, boothId, printQueue, config, cloud }: Deps)
   async function followCloud(paymentId: string, actor: StaffUser, ask: () => Promise<Verdict>) {
     const local = db.select().from(schema.payments).where(eq(schema.payments.id, paymentId)).get();
     const order = local && db.select().from(schema.orders).where(eq(schema.orders.id, local.orderId)).get();
-    if (!local || !order || order.boothId !== boothId) throw new HttpError(404, 'payment_not_found');
+    // Online orders (booking, gallery) are settled by the cloud and arrive by sync; the till only follows its own sales.
+    if (!local || !order || order.boothId !== boothId || order.channel !== 'booth') throw new HttpError(404, 'payment_not_found');
     if (local.status !== 'pending') return { status: local.status as string, operatorRef: local.providerTxId, operatorMismatch: false };
 
     let v: Verdict;
@@ -131,7 +132,7 @@ export function posRoutes({ db, hub, boothId, printQueue, config, cloud }: Deps)
     if (!cloud) return;
     const pending = db.select({ id: schema.payments.id }).from(schema.payments)
       .innerJoin(schema.orders, eq(schema.orders.id, schema.payments.orderId))
-      .where(and(eq(schema.orders.bookingId, bookingId), eq(schema.payments.status, 'pending')))
+      .where(and(eq(schema.orders.bookingId, bookingId), eq(schema.orders.channel, 'booth'), eq(schema.payments.status, 'pending')))
       .orderBy(desc(schema.payments.createdAt)).limit(3).all();
     for (const p of pending) {
       await followCloud(p.id, actor, () => cloud.post(`/api/sync/payments/${p.id}/verify`, {}, QUICK_CHECK_MS)).catch(() => {});
@@ -303,9 +304,10 @@ export function posRoutes({ db, hub, boothId, printQueue, config, cloud }: Deps)
       started = await c.post('/api/sync/payments', { order, items, paymentId, method: body.method, phone: body.phone, receivedBy: user.id });
     } catch (e) {
       const unknown = e instanceof CloudError && (e.status === 0 || e.code === 'internal' || e.code.startsWith('http_'));
-      if (unknown) return res.status(202).json({ paymentId, kind: 'unknown', url: null }); // polling finds out what happened
+      if (unknown) { res.status(202).json({ paymentId, kind: 'unknown', url: null }); return; } // polling finds out what happened
       db.update(schema.payments).set({ status: 'failed' }).where(eq(schema.payments.id, paymentId)).run();
-      return cloudFail(e);
+      cloudFail(e);
+      return;
     }
     const provider = CLOUD_PROVIDERS.find((p) => p === started.provider) ?? null;
     db.update(schema.payments).set({ provider }).where(eq(schema.payments.id, paymentId)).run();

@@ -11,9 +11,9 @@ function App() {
   useEffect(() => {
     const f = () => setPath(location.pathname);
     addEventListener('popstate', f);
-    document.documentElement.lang = locale;
     return () => removeEventListener('popstate', f);
   }, []);
+  useEffect(() => { document.documentElement.lang = locale; }, [locale]);
   const token = /^\/b\/([A-Za-z0-9_-]{10,})$/.exec(path)?.[1];
 
   return (
@@ -31,5 +31,8 @@ function App() {
     </>
   );
 }
+
+// Back from the payment page, browsers may restore this page frozen mid-request (buttons disabled): start clean.
+addEventListener('pageshow', (e) => { if (e.persisted) location.reload(); });
 
 render(<App />, document.getElementById('root')!);

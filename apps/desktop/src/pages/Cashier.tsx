@@ -249,7 +249,8 @@ export function Cashier({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav
   );
 }
 
-interface LivePayment { paymentId: string; kind: 'redirect' | 'push'; url: string | null }
+/** `unknown`: the request left but no answer came back; polling tells whether the cloud received it. */
+interface LivePayment { paymentId: string; kind: 'redirect' | 'push' | 'unknown'; url: string | null }
 
 function PaymentModal({ total, orderId, drawerOpen, methods, cloud, onClose, onPaid }: {
   total: number; orderId: string; drawerOpen: boolean; methods: Method[]; cloud: boolean; onClose(): void; onPaid(): void;
@@ -364,7 +365,7 @@ function PaymentModal({ total, orderId, drawerOpen, methods, cloud, onClose, onP
                       <p className="text-sm text-slate-600">{t('pay.momo.scan')}</p>
                     </>
                   ) : (
-                    <p className="rounded-lg bg-slate-50 p-3 text-slate-700">{t('pay.momo.push')}</p>
+                    <p className="rounded-lg bg-slate-50 p-3 text-slate-700">{t(live.kind === 'unknown' ? 'pay.momo.unknown' : 'pay.momo.push')}</p>
                   )}
                   <p role="status" className="animate-pulse font-medium text-slate-700">{t('pay.momo.waiting')}</p>
                   <div className="flex w-full gap-2 border-t border-slate-200 pt-3">

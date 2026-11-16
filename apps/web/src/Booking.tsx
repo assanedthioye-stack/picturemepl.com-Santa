@@ -11,6 +11,7 @@ interface BookingView {
 }
 type Momo = 'wave' | 'orange_money' | 'mtn_momo';
 // Celtiis Cash has no API integration yet: paid at the booth only.
+const POLL_LIMIT_MS = 5 * 60_000;
 const onlineMethods = (c: Country) => (COUNTRIES[c].momo as readonly string[]).filter((m) => m !== 'celtiis_cash') as Momo[];
 
 export function Booking({ token }: { token: string }) {
@@ -18,6 +19,7 @@ export function Booking({ token }: { token: string }) {
   const [b, setB] = useState<BookingView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [waiting, setWaiting] = useState(new URLSearchParams(location.search).has('paid'));
+  const [slow, setSlow] = useState(false);
 
   const load = () => api<BookingView>('GET', `/api/bookings/${token}`).then((v) => {
     setB(v);
@@ -29,7 +31,11 @@ export function Booking({ token }: { token: string }) {
   // Poll while a payment is being confirmed (webhook or not, the server re-asks the provider).
   useEffect(() => {
     if (!waiting) return;
+    setSlow(false);
+    const started = Date.now();
     const id = setInterval(async () => {
+      // A tab left open must not ask all night; reloading the page asks again.
+      if (Date.now() - started > POLL_LIMIT_MS) { setWaiting(false); setSlow(true); return; }
       const v = await load();
       if (v && v.paymentStatus !== 'pending') setWaiting(false);
     }, 3000);
@@ -51,6 +57,7 @@ export function Booking({ token }: { token: string }) {
         <Ticket token={token} b={b} when={when} pkgName={pkg ? (locale === 'fr' ? pkg.nameFr : pkg.nameEn) : ''} />
       )}
       {b.photoCount > 0 && <Gallery token={token} country={b.country} onPaying={() => setWaiting(true)} waiting={waiting} />}
+      {slow && <p role="status" class="rounded-lg bg-amber-50 px-3 py-2 text-amber-800">{t('pay.slow')}</p>}
       {error && <p role="alert" class="rounded-lg bg-brand-50 px-3 py-2 text-brand-700">{error}</p>}
     </main>
   );

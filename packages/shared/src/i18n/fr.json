@@ -139,6 +139,7 @@
   "pay.momo.send": "Envoyer la demande de paiement",
   "pay.momo.scan": "Le client scanne ce code (aussi affiché sur l'écran client) et paie sur son téléphone.",
   "pay.momo.push": "Le client valide le paiement sur son téléphone.",
+  "pay.momo.unknown": "Réponse du réseau perdue : vérification en cours. Si rien ne change, annulez puis recommencez.",
   "pay.momo.waiting": "En attente de la confirmation de l'opérateur…",
   "pay.verify.ref": "ID de transaction (SMS du client, facultatif)",
   "pay.verify": "Vérifier la transaction",

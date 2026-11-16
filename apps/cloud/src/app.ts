@@ -305,7 +305,7 @@ export function createCloudApp(d: CloudDeps): Hono {
     if (!booth) return c.json({ error: 'unauthorized' }, 401);
     c.set('booth', booth);
     await db.query('update booths set last_seen_at = $2 where id = $1', [booth.id, Date.now()]);
-    await next();
+    return next();
   });
 
   // Merchant numbers shown to cashiers for the manual fallback.

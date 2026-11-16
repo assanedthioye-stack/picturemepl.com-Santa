@@ -79,7 +79,7 @@ export function pairingRoutes(deps: Deps): Router {
     const token = String(req.query.t ?? '');
     const p = pending.get(token);
     pending.delete(token); // one use, even when expired
-    if (!req.secure || !p || p.exp < Date.now()) return res.status(403).type('html').send(notPairedPage);
+    if (!req.secure || !p || p.exp < Date.now()) { res.status(403).type('html').send(notPairedPage); return; }
     const deviceToken = randomBytes(32).toString('base64url');
     const id = uuidv7();
     db.insert(schema.devices).values({ id, name: p.name, tokenHash: sha256(deviceToken), pairedBy: p.by, pairedAt: Date.now() }).run();

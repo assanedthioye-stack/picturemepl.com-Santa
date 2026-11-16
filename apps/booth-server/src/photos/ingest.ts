@@ -52,7 +52,7 @@ const stem = (f: string) => path.basename(f, path.extname(f)).toLowerCase();
  * JPEG → photo row + watermarked preview. RAW → attached to the JPEG with the same name.
  */
 export async function ingestFile(ctx: IngestCtx, file: string, originalName: string, sessionId: string): Promise<PhotoRow | null> {
-  const { db, hub } = ctx;
+  const { db } = ctx;
   const fileName = path.basename(file);
 
   if (RAW_EXT.test(fileName)) {

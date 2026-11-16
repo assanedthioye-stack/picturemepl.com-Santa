@@ -56,7 +56,7 @@ export function createApp(deps: Deps): express.Express {
 
   app.get('/api/events', (req, res) => {
     const p = req.principal;
-    if (!p) return res.status(401).end();
+    if (!p) { res.status(401).end(); return; }
     deps.hub.attach(req, res, p.kind === 'kiosk' ? 'kiosk' : 'staff', () =>
       p.kind === 'kiosk'
         ? [['kiosk.state', kioskState(deps.db)]]
