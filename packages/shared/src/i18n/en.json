@@ -153,5 +153,13 @@
   "err.cloud_unreachable": "No internet connection: use manual entry",
   "err.provider_error": "The operator is not answering, try again",
   "err.method_not_integrated": "This payment method uses manual entry",
-  "err.not_fully_prepaid": "An amount is still due"
+  "err.not_fully_prepaid": "An amount is still due",
+  "err.already_in_queue": "This family is already in the queue",
+  "err.photo_sold": "Photo already sold: it cannot be hidden",
+  "err.order_paid": "This order has just been paid",
+  "err.nothing_to_pay": "Nothing to collect for this order",
+  "err.too_large": "Request too large",
+  "sync.offline": "Cloud offline",
+  "print.failed": "failed print(s)",
+  "print.retry": "Retry"
 }

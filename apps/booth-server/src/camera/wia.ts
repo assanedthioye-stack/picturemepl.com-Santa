@@ -36,10 +36,17 @@ export class WiaDriver implements CameraDriver {
         const battery = typeof msg.battery === 'number' ? msg.battery : null;
         h.status({ connected: msg.connected === true, model: (msg.model as string) ?? null, batteryPercent: battery, error: null });
       } else if (msg.type === 'file') {
+        // An exception here would be uncaught (stream callback) and take the whole server down.
         const name = String(msg.name);
-        const target = h.targetFor(name);
-        moveFile(String(msg.path), target);
-        h.downloaded(target, name);
+        let target: string | null = null;
+        try {
+          target = h.targetFor(name);
+          moveFile(String(msg.path), target);
+          h.downloaded(target, name);
+        } catch (e) {
+          if (target) h.aborted(target);
+          h.error(e as Error);
+        }
       } else if (msg.type === 'error') {
         h.status({ error: String(msg.message) });
       }

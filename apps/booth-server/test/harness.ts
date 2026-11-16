@@ -16,9 +16,14 @@ export interface Printed { pdf: Buffer; o: PrintOptions }
 export async function makeBooth(env: (root: string) => Record<string, string> = () => ({}), opts: { lanIps?: string[]; manualSync?: boolean } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'pmp-'));
   const printed: Printed[] = [];
+  /** Set `fail` to make every print throw that message (e.g. the printer is off). */
+  const printer = { fail: null as string | null };
   const spooler: Spooler = {
     listPrinters: async () => ['Microsoft Print to PDF', 'DNP DS620A', 'Canon PIXMA TS8320'],
-    print: async (pdf, o) => { printed.push({ pdf: readFileSync(pdf), o }); },
+    print: async (pdf, o) => {
+      if (printer.fail) throw new Error(printer.fail);
+      printed.push({ pdf: readFileSync(pdf), o });
+    },
   };
   const config = loadConfig({ PMP_ROOT: root, PMP_KIOSK_TOKEN: KIOSK_TOKEN, PMP_CAMERA_DRIVER: 'mock', PMP_LAN: '0', ...env(root) });
   const booth: Booth = await startBooth(config, { spooler, ...opts });
@@ -65,7 +70,7 @@ export async function makeBooth(env: (root: string) => Record<string, string> = 
   }
 
   return {
-    booth, base, root, printed, boothId, addUser, seedBooking, seedOrder, client,
+    booth, base, root, printed, printer, boothId, addUser, seedBooking, seedOrder, client,
     async close() { server.close(); await booth.stop(); rmSync(root, { recursive: true, force: true }); },
   };
 }

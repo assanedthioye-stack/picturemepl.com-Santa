@@ -11,9 +11,9 @@ export function parseInches(size: PrintSize, custom: string | null): [number, nu
   if (size !== 'custom') return PRINT_INCHES[size];
   const m = /^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$/.exec(custom ?? '');
   if (!m) throw new Error('custom_size_required');
-  const a = Number(m[1]), b = Number(m[2]);
-  if (a < 2 || b < 2 || a > 13 || b > 19) throw new Error('custom_size_out_of_range');
-  return [Math.min(a, b), Math.max(a, b)];
+  const short = Math.min(Number(m[1]), Number(m[2])), long = Math.max(Number(m[1]), Number(m[2]));
+  if (short < 2 || short > 13 || long > 19) throw new Error('custom_size_out_of_range');
+  return [short, long];
 }
 
 /**

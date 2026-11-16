@@ -71,6 +71,10 @@ export class CameraService {
           this.queue = this.queue.then(() => ingestFile(this.o.ingest, file, name, sessionId))
             .catch((e) => this.o.hub.send('photo.failed', { fileName: name, error: (e as Error).message }));
         },
+        aborted: (file) => {
+          this.pending.delete(file);
+          this.o.hub.send('photo.failed', { fileName: path.basename(file), error: 'download_failed' });
+        },
         error: (e) => this.setStatus({ error: e.message }),
       });
     } catch (e) {

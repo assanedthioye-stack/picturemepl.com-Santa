@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { hash, verify } from '@node-rs/argon2';
-import { and, count, eq, gt } from 'drizzle-orm';
+import { and, count, eq, gt, lt } from 'drizzle-orm';
 import type { NextFunction, Request, Response } from 'express';
 import { schema, type Db } from '@pmp/db';
 import { can, type Permission, type StaffRole } from '@pmp/shared';
@@ -49,6 +49,7 @@ export async function login(db: Db, boothId: string, userId: string, secret: str
     return { ok: false, reason: fails + 1 >= MAX_FAILS ? 'locked' : 'invalid' };
   }
 
+  db.delete(schema.staffSessions).where(lt(schema.staffSessions.expiresAt, Date.now())).run(); // housekeeping
   const token = randomBytes(32).toString('base64url');
   db.insert(schema.staffSessions).values({
     tokenHash: sha256(token), userId, deviceId: 'booth-pc', expiresAt: Date.now() + SESSION_MS,

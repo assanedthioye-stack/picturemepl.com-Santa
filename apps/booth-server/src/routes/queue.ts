@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { Router } from 'express';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getSetting, schema, writeSynced, type Db } from '@pmp/db';
 import { COUNTRIES, extractBookingCode, normalizePhone, WALK_IN_CODE_PREFIX, type Country } from '@pmp/shared';
@@ -12,6 +12,8 @@ import { digitCode, humanCode, uuidv7 } from '../ids';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 const Q = schema.queueEntries;
+/** Entries older than this are yesterday's leftovers and no longer shown. */
+const QUEUE_WINDOW_MS = 18 * 3600_000;
 
 /** 6-digit walk-in code: starts with 9 (online codes never do) and is unique on this booth (codes are per booth in the cloud too). */
 export function newBookingCode(db: Db | Tx): string {
@@ -48,7 +50,7 @@ export function queueList(db: Db) {
   }).from(Q)
     .innerJoin(schema.bookings, eq(schema.bookings.id, Q.bookingId))
     .innerJoin(schema.customers, eq(schema.customers.id, schema.bookings.customerId))
-    .where(inArray(Q.status, ['waiting', 'called', 'shooting']))
+    .where(and(inArray(Q.status, ['waiting', 'called', 'shooting']), gt(Q.enqueuedAt, Date.now() - QUEUE_WINDOW_MS)))
     .orderBy(sql`${Q.manualRank} is null`, Q.manualRank, sql`${Q.lane} = 'walk_in'`, Q.sortAt)
     .all();
 }
@@ -78,11 +80,21 @@ export function queueRoutes({ db, hub, boothId, config, syncNow }: Deps): Router
     if (!b && syncNow) { await syncNow().catch(() => {}); b = find(); } // booked online moments ago
     if (!b) throw new HttpError(404, 'booking_not_found');
     if (b.boothId !== boothId) throw new HttpError(409, 'booking_other_booth');
+    const now = Date.now();
     const existing = db.select().from(Q).where(eq(Q.bookingId, b.id)).get();
-    if (existing) return res.json({ entryId: existing.id, alreadyCheckedIn: true });
+    if (existing) {
+      if (existing.status === 'left' || existing.status === 'skipped') {
+        // Stepped away and came back: they rejoin the queue instead of being told "already checked in".
+        writeSynced(db, Q, { id: existing.id, status: 'waiting', sortAt: now, enqueuedAt: now });
+        audit(db, boothId, { action: 'queue.rejoin', actorId: user.id, actorRole: user.role, entity: 'booking', entityId: b.id });
+        changed();
+        return res.status(201).json({ entryId: existing.id, alreadyCheckedIn: false });
+      }
+      if (existing.status === 'done') throw new HttpError(409, `booking_${b.status}`);
+      return res.json({ entryId: existing.id, alreadyCheckedIn: true });
+    }
     if (b.status === 'pending_payment') throw new HttpError(409, 'booking_unpaid');
     if (b.status !== 'confirmed') throw new HttpError(409, `booking_${b.status}`);
-    const now = Date.now();
     const entry = db.transaction((tx) => {
       writeSynced(tx, schema.bookings, { id: b.id, status: 'checked_in', checkedInAt: now, checkedInBy: user.id });
       return writeSynced(tx, Q, { id: uuidv7(), boothId, bookingId: b.id, lane: 'booked', sortAt: now, status: 'waiting', enqueuedAt: now });
@@ -102,6 +114,12 @@ export function queueRoutes({ db, hub, boothId, config, syncNow }: Deps): Router
     const pinHash = await hashSecret(pin);
     const now = Date.now();
     const booking = db.transaction((tx) => {
+      // A double tap (or a second tablet) must not put the same family in the queue twice.
+      const dup = tx.select({ id: Q.id }).from(Q)
+        .innerJoin(schema.bookings, eq(schema.bookings.id, Q.bookingId))
+        .innerJoin(schema.customers, eq(schema.customers.id, schema.bookings.customerId))
+        .where(and(eq(Q.boothId, boothId), eq(Q.status, 'waiting'), eq(schema.customers.phone, phone), gt(Q.enqueuedAt, now - QUEUE_WINDOW_MS))).get();
+      if (dup) throw new HttpError(409, 'already_in_queue');
       const customer = writeSynced(tx, schema.customers, { id: uuidv7(), phone, country: body.country, fullName: body.fullName });
       const b = writeSynced(tx, schema.bookings, {
         id: uuidv7(), code: newBookingCode(tx), publicToken: randomBytes(16).toString('base64url'), pinHash, // gallery link: must be unguessable
@@ -119,11 +137,15 @@ export function queueRoutes({ db, hub, boothId, config, syncNow }: Deps): Router
   // "Send to Photographer": the family's name + code pop up on the Photographer screen.
   r.post('/api/queue/:id/send', requirePerm('session.dispatch'), (req, res) => {
     const user = staffOf(req);
-    const e = db.select().from(Q).where(eq(Q.id, String(req.params.id))).get();
-    if (!e) throw new HttpError(404, 'queue_entry_not_found');
-    if (e.status !== 'waiting') throw new HttpError(409, `queue_${e.status}`);
-    const session = dispatchSession(db, boothId, e.bookingId, user);
-    setQueueStatus(db, e.bookingId, 'called');
+    // One transaction: a crash can never leave a session without its queue entry marked "called".
+    const session = db.transaction((tx) => {
+      const e = tx.select().from(Q).where(eq(Q.id, String(req.params.id))).get();
+      if (!e) throw new HttpError(404, 'queue_entry_not_found');
+      if (e.status !== 'waiting') throw new HttpError(409, `queue_${e.status}`);
+      const s = dispatchSession(tx as unknown as Db, boothId, e.bookingId, user);
+      setQueueStatus(tx, e.bookingId, 'called');
+      return s;
+    });
     hub.send('session.updated', session);
     changed();
     res.status(201).json(session);

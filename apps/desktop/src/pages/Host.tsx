@@ -20,10 +20,13 @@ export function Host({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav?: 
   const [walkIn, setWalkIn] = useState({ fullName: '', phone: '', country: me.boothCountry as Country, partySize: 2 });
   const [added, setAdded] = useState<{ bookingCode: string; pin: string; galleryUrl: string | null } | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [adding, setAdding] = useState(false);
 
-  useEffect(() => { api<QueueRow[]>('GET', '/api/queue').then(setQueue, () => {}); }, []);
+  const loadQueue = useCallback(() => { api<QueueRow[]>('GET', '/api/queue').then(setQueue, () => {}); }, []);
+  useEffect(loadQueue, [loadQueue]);
   useEffect(() => { const i = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(i); }, []);
-  useEvents({ 'queue.updated': setQueue });
+  // sync.pulled: an online booking just arrived or changed; reconnect: reload what was missed.
+  useEvents({ 'queue.updated': setQueue, 'sync.pulled': loadQueue }, loadQueue);
 
   const checkIn = useCallback(async (raw: string) => {
     setScanning(false);
@@ -38,12 +41,16 @@ export function Host({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav?: 
 
   const addWalkIn = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (adding) return; // a double tap must not register the family twice
+    setAdding(true);
     setFlash(null);
     try {
       setAdded(await api('POST', '/api/queue/walk-in', walkIn));
       setWalkIn((w) => ({ ...w, fullName: '', phone: '', partySize: 2 }));
     } catch (err) {
       setFlash({ ok: false, text: errorText(t, err) });
+    } finally {
+      setAdding(false);
     }
   };
 
@@ -117,7 +124,7 @@ export function Host({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav?: 
                     <button type="button" aria-label="+" onClick={() => setWalkIn({ ...walkIn, partySize: Math.min(20, walkIn.partySize + 1) })} className="size-11 rounded-full border border-slate-300 text-xl">+</button>
                   </div>
                 </div>
-                <button className="rounded-xl bg-slate-900 py-3 font-semibold text-white">{t('host.walkin.submit')}</button>
+                <button disabled={adding} className="rounded-xl bg-slate-900 py-3 font-semibold text-white disabled:opacity-40">{t('host.walkin.submit')}</button>
               </form>
             )}
           </section>

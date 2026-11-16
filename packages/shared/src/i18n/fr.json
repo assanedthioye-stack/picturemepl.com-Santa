@@ -153,5 +153,13 @@
   "err.cloud_unreachable": "Pas de connexion Internet : utilisez la saisie manuelle",
   "err.provider_error": "L'opérateur ne répond pas, réessayez",
   "err.method_not_integrated": "Ce moyen de paiement passe par la saisie manuelle",
-  "err.not_fully_prepaid": "Il reste un montant à payer"
+  "err.not_fully_prepaid": "Il reste un montant à payer",
+  "err.already_in_queue": "Cette famille est déjà dans la file",
+  "err.photo_sold": "Photo déjà vendue : impossible de la masquer",
+  "err.order_paid": "Cette commande vient d'être payée",
+  "err.nothing_to_pay": "Rien à encaisser pour cette commande",
+  "err.too_large": "Demande trop volumineuse",
+  "sync.offline": "Cloud hors ligne",
+  "print.failed": "impression(s) en échec",
+  "print.retry": "Relancer"
 }

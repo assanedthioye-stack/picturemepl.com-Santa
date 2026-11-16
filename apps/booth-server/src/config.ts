@@ -36,12 +36,13 @@ export interface Config {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const root = env.PMP_ROOT ?? (process.platform === 'win32' ? 'C:\\PhotoBooth' : path.join(os.homedir(), 'PhotoBooth'));
+  // Absolute: files are served with sendFile, which refuses relative paths.
+  const root = path.resolve(env.PMP_ROOT ?? (process.platform === 'win32' ? 'C:\\PhotoBooth' : path.join(os.homedir(), 'PhotoBooth')));
   if (!env.PMP_KIOSK_TOKEN || env.PMP_KIOSK_TOKEN.length < 32) throw new Error('PMP_KIOSK_TOKEN missing or too short');
   const country = (env.PMP_COUNTRY ?? 'SN').toUpperCase();
   if (!(country in COUNTRIES)) throw new Error(`PMP_COUNTRY must be one of ${Object.keys(COUNTRIES).join(', ')}`);
-  const photosDir = env.PMP_PHOTOS_DIR ?? root;
-  const mirrorDir = env.PMP_MIRROR_DIR || null;
+  const photosDir = path.resolve(env.PMP_PHOTOS_DIR ?? root);
+  const mirrorDir = env.PMP_MIRROR_DIR ? path.resolve(env.PMP_MIRROR_DIR) : null;
   if (mirrorDir && isSameOrInside(mirrorDir, photosDir)) throw new Error('PMP_MIRROR_DIR must be outside PMP_PHOTOS_DIR');
   if (mirrorDir && isSameOrInside(photosDir, mirrorDir)) throw new Error('PMP_PHOTOS_DIR must be outside PMP_MIRROR_DIR');
   return {
@@ -56,8 +57,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     migrationsDir: env.PMP_MIGRATIONS_DIR ?? path.resolve(import.meta.dirname, '../../../packages/db/drizzle'),
     rendererDir: env.PMP_RENDERER_DIR ?? null,
     host: env.PMP_LAN === '0' ? '127.0.0.1' : '0.0.0.0',
-    port: Number(env.PMP_PORT ?? 4100),
-    httpsPort: Number(env.PMP_HTTPS_PORT ?? 4443),
+    port: port(env, 'PMP_PORT', 4100),
+    httpsPort: port(env, 'PMP_HTTPS_PORT', 4443),
     lan: env.PMP_LAN !== '0',
     kioskToken: env.PMP_KIOSK_TOKEN,
     cameraDriver: env.PMP_CAMERA_DRIVER ?? null,
@@ -72,6 +73,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 function isSameOrInside(child: string, parent: string): boolean {
   const rel = path.relative(path.resolve(parent), path.resolve(child));
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+function port(env: NodeJS.ProcessEnv, k: string, fallback: number): number {
+  const v = env[k] === undefined ? fallback : Number(env[k]);
+  if (!Number.isInteger(v) || v < 1 || v > 65535) throw new Error(`${k} must be a port number (1-65535)`);
+  return v;
 }
 
 function need(env: NodeJS.ProcessEnv, k: string): string {

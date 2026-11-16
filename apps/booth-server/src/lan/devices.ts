@@ -66,6 +66,7 @@ export function pairingRoutes(deps: Deps): Router {
     const { name } = PairBody.parse(req.body);
     const ip = deps.tls?.ips[0];
     if (!ip) throw new HttpError(409, 'no_lan_address');
+    for (const [k, v] of pending) if (v.exp < Date.now()) pending.delete(k);
     const token = randomBytes(24).toString('base64url');
     pending.set(token, { name, by: staffOf(req).id, exp: Date.now() + PAIR_TTL_MS });
     const setupUrl = `http://${ip}:${config.port}/setup`;

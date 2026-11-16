@@ -17,6 +17,7 @@ import type { MirrorService } from './storage/mirror';
 import { lanGuard, pairingRoutes } from './lan/devices';
 import type { TlsMaterial } from './lan/tls';
 import type { CloudClient } from './cloud/client';
+import type { SyncStatus } from './cloud/sync';
 
 export interface Deps {
   db: Db;
@@ -33,6 +34,8 @@ export interface Deps {
   cloud: CloudClient | null;
   /** Pulls from the cloud now (a family who booked a minute ago is not synced yet). */
   syncNow?: () => Promise<void>;
+  /** null when the booth runs without the cloud. */
+  syncStatus?: () => SyncStatus | null;
 }
 
 export function createApp(deps: Deps): express.Express {
@@ -60,8 +63,12 @@ export function createApp(deps: Deps): express.Express {
         : [
           ...[...deps.cameras.values()].map((c) => ['camera.status', { cameraId: c.cameraId, ...c.status }] as [string, unknown]),
           ['storage.status', deps.mirror.status()],
+          ['sync.status', deps.syncStatus?.() ?? null],
         ]);
   });
+
+  // Unknown API path: JSON like every other API answer (never the app's HTML).
+  app.use('/api', (_req, res) => { res.status(404).json({ error: 'not_found' }); });
 
   // The React build (staff UI + /kiosk). Unknown non-API paths fall back to the SPA.
   const ui = deps.config.rendererDir;

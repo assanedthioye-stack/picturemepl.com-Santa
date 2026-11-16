@@ -24,14 +24,14 @@ const NewPrint = z.object({
 
 /** Camera control, print jobs and preview files. */
 export function deviceRoutes(deps: Deps): Router {
-  const { db, hub, boothId, cameras, printQueue, spooler, config, mirror } = deps;
+  const { db, hub, boothId, cameras, printQueue, spooler, config, mirror, syncStatus } = deps;
   const r = Router();
 
   r.get('/api/cameras', requirePerm('camera.view'), (_req, res) => {
     res.json([...cameras.values()].map((c) => ({ id: c.cameraId, armedSessionId: c.armedSessionId(), ...c.status })));
   });
 
-  r.get('/api/storage', requirePerm('camera.view', 'print.view'), (_req, res) => res.json(mirror.status()));
+  r.get('/api/storage', requirePerm('camera.view', 'print.view'), (_req, res) => res.json({ ...mirror.status(), cloud: syncStatus?.() ?? null }));
 
   r.post('/api/cameras/:id/shutter', requirePerm('session.shoot'), async (req, res) => {
     const cam = cameras.get(String(req.params.id));
@@ -68,7 +68,8 @@ export function deviceRoutes(deps: Deps): Router {
         .where(eq(schema.orderItems.id, body.orderItemId)).get();
       if (!item) throw new HttpError(404, 'order_item_not_found');
       if (item.order.status !== 'paid') throw new HttpError(402, 'order_not_paid'); // money first, then paper
-      if (!['print', 'bundle'].includes(item.item.kind)) throw new HttpError(409, 'not_a_print_item');
+      // Only print lines carry a print entitlement (photo, size, quantity); a package line does not.
+      if (item.item.kind !== 'print') throw new HttpError(409, 'not_a_print_item');
       const photo = tx.select().from(schema.photos).where(eq(schema.photos.id, body.photoId)).get();
       if (!photo || photo.bookingId !== item.order.bookingId) throw new HttpError(404, 'photo_not_in_order');
       if (item.item.photoId && item.item.photoId !== photo.id) throw new HttpError(409, 'photo_mismatch');
@@ -83,6 +84,19 @@ export function deviceRoutes(deps: Deps): Router {
     hub.send('print.updated', job);
     printQueue.kick();
     res.status(201).json(job);
+  });
+
+  // A failed job (paper out, printer off, app restarted mid-print) goes back in the queue once staff has checked the printer.
+  r.post('/api/print-jobs/:id/retry', requirePerm('print.create'), (req, res) => {
+    const user = staffOf(req);
+    const job = db.select().from(schema.printJobs).where(eq(schema.printJobs.id, String(req.params.id))).get();
+    if (!job) throw new HttpError(404, 'print_job_not_found');
+    if (job.status !== 'failed') throw new HttpError(409, `print_${job.status}`);
+    const row = writeSynced(db, schema.printJobs, { id: job.id, status: 'queued', attempts: 0, lastError: null });
+    audit(db, boothId, { action: 'print.retry', actorId: user.id, actorRole: user.role, entity: 'print_job', entityId: job.id });
+    hub.send('print.updated', row);
+    printQueue.kick();
+    res.json(row);
   });
 
   r.get('/api/print-jobs', requirePerm('print.view'), (_req, res) => {

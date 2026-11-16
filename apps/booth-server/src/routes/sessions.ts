@@ -7,9 +7,9 @@ import { audit } from '../audit';
 import { requirePerm, staffOf } from '../auth/auth';
 import { HttpError } from '../http';
 import { toDto } from '../photos/ingest';
-import { kioskState, setKioskSession } from './kiosk';
+import { enqueueGalleryUploads } from '../cloud/uploads';
+import { kioskSessionId, kioskState, setKioskSession } from './kiosk';
 import { dispatchSession, setQueueStatus } from './queue';
-import { enqueueUpload } from '../cloud/sync';
 
 const Dispatch = z.object({ bookingCode: z.string().trim().toUpperCase().min(4).max(12) });
 const Arm = z.object({ cameraId: z.string().optional() });
@@ -71,10 +71,15 @@ export function sessionRoutes(deps: Deps): Router {
 
   r.post('/api/sessions/:id/complete', requirePerm('session.shoot'), async (req, res) => {
     const user = staffOf(req);
-    const s = db.select().from(S).where(eq(S.id, String(req.params.id))).get();
-    if (!s) throw new HttpError(404, 'session_not_found');
-    if (s.status !== 'armed') throw new HttpError(409, `session_${s.status}`);
-    db.transaction((tx) => {
+    const id = String(req.params.id);
+    const first = db.select().from(S).where(eq(S.id, id)).get();
+    if (!first) throw new HttpError(404, 'session_not_found');
+    if (first.status !== 'armed') throw new HttpError(409, `session_${first.status}`);
+    // Let the last shots finish downloading and previewing: every photo must reach the cashier and the gallery.
+    if (first.cameraId) await cameras.get(first.cameraId)?.idle();
+    const s = db.transaction((tx) => {
+      const s = tx.select().from(S).where(eq(S.id, id)).get()!;
+      if (s.status !== 'armed') throw new HttpError(409, `session_${s.status}`); // a second tap while we waited
       if (s.cameraId) writeSynced(tx, schema.cameras, { id: s.cameraId, armedSessionId: null, armedBy: null, armedAt: null });
       writeSynced(tx, S, { id: s.id, status: 'shot_complete', completedAt: Date.now() });
       writeSynced(tx, schema.bookings, { id: s.bookingId, status: 'shot_complete' });
@@ -82,10 +87,9 @@ export function sessionRoutes(deps: Deps): Router {
       // Online gallery: small previews now; every original later (so photos bought online after the event exist).
       for (const p of tx.select({ id: schema.photos.id }).from(schema.photos)
         .where(and(eq(schema.photos.sessionId, s.id), eq(schema.photos.ingestStatus, 'ready'), eq(schema.photos.hidden, false))).all()) {
-        enqueueUpload(tx as never, p.id, 'thumb', 5);
-        enqueueUpload(tx as never, p.id, 'preview', 5);
-        enqueueUpload(tx as never, p.id, 'deliverable', 0);
+        enqueueGalleryUploads(tx as never, p.id);
       }
+      return s;
     });
     // The kiosk keeps showing this family's photos so they can keep picking favourites.
     audit(db, boothId, { action: 'session.complete', actorId: user.id, actorRole: user.role, entity: 'photo_session', entityId: s.id });
@@ -104,8 +108,22 @@ export function sessionRoutes(deps: Deps): Router {
     const { hidden } = Hidden.parse(req.body);
     const photo = db.select().from(schema.photos).where(eq(schema.photos.id, String(req.params.id))).get();
     if (!photo) throw new HttpError(404, 'photo_not_found');
+    if (hidden) {
+      // A photo the family paid for would vanish from their online gallery.
+      const sold = db.select({ id: schema.orderItems.id }).from(schema.orderItems)
+        .innerJoin(schema.orders, eq(schema.orders.id, schema.orderItems.orderId))
+        .where(and(eq(schema.orderItems.photoId, photo.id), eq(schema.orders.status, 'paid'))).get();
+      if (sold) throw new HttpError(409, 'photo_sold');
+    }
     const row = writeSynced(db, schema.photos, { id: photo.id, hidden, favorite: hidden ? false : photo.favorite });
-    hub.send('photo.updated', toDto(row), ['staff', 'kiosk']);
+    if (!hidden) {
+      // Shown again after the shoot was closed: it still has to reach the gallery.
+      const session = db.select({ status: S.status }).from(S).where(eq(S.id, photo.sessionId)).get();
+      if (session?.status === 'shot_complete') enqueueGalleryUploads(db, photo.id);
+    }
+    hub.send('photo.updated', toDto(row));
+    // The family screen only hears about its own session, and gets the full list (a photo may reappear).
+    if (row.sessionId === kioskSessionId(db)) hub.send('kiosk.state', kioskState(db), ['kiosk']);
     res.json(toDto(row));
   });
 

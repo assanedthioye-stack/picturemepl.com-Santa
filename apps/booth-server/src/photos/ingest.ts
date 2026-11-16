@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
-import { and, eq, inArray, max, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, max, or, sql } from 'drizzle-orm';
 import { schema, writeSynced, type Db } from '@pmp/db';
 import type { EventHub } from '../events';
 import { uuidv7 } from '../ids';
 import { JPEG_EXT, RAW_EXT } from '../camera/types';
+import { enqueueGalleryUploads } from '../cloud/uploads';
 import { makePreview } from './preview';
 
 export interface IngestCtx {
@@ -96,6 +97,9 @@ async function finishPreview(ctx: IngestCtx, photo: PhotoRow): Promise<PhotoRow>
   try {
     const r = await makePreview(src, dest, ctx.watermark);
     const ready = writeSynced(db, schema.photos, { id: photo.id, width: r.width, height: r.height, ingestStatus: 'ready' });
+    // Ready only after the shoot was closed (slow preview, crash recovery): it still belongs in the gallery.
+    const session = db.select({ status: schema.photoSessions.status }).from(schema.photoSessions).where(eq(schema.photoSessions.id, photo.sessionId)).get();
+    if (session?.status === 'shot_complete' && !ready.hidden) enqueueGalleryUploads(db, ready.id);
     hub.send('photo.ready', toDto(ready), ['staff', 'kiosk']);
     return ready;
   } catch (e) {
@@ -112,7 +116,12 @@ async function finishPreview(ctx: IngestCtx, photo: PhotoRow): Promise<PhotoRow>
 export async function recoverIngest(ctx: IngestCtx): Promise<number> {
   const { db, sessionsDir } = ctx;
   let n = 0;
-  for (const p of db.select().from(schema.photos).where(eq(schema.photos.ingestStatus, 'ingesting')).all()) {
+  // Unfinished previews, plus recent failures (a full disk or a locked file may be fine now).
+  const retry = db.select().from(schema.photos).where(or(
+    eq(schema.photos.ingestStatus, 'ingesting'),
+    and(eq(schema.photos.ingestStatus, 'failed'), gt(schema.photos.updatedAt, Date.now() - 24 * 3600_000)),
+  )).all();
+  for (const p of retry) {
     await finishPreview(ctx, p);
     n++;
   }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { COUNTRIES, PRINT_LABEL, type MomoMethod, type PrintSize } from '@pmp/shared';
-import { api, useEvents, type Me, type PhotoDto } from '../api';
+import { api, useEvents, type Me, type PhotoDto, type PrintJob } from '../api';
 import { errorText, money, useT } from '../i18n';
 import { TopBar } from './StaffApp';
 
@@ -23,18 +23,29 @@ export function Cashier({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav
   const [checkout, setCheckout] = useState<{ orderId: string; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [prints, setPrints] = useState<PrintJob[]>([]);
+
   const loadFamilies = () => api<Family[]>('GET', '/api/pos/families').then(setFamilies, () => {});
   const loadDrawer = () => api<Drawer | null>('GET', '/api/pos/drawer').then(setDrawer, () => {});
+  const loadPrints = () => api<PrintJob[]>('GET', '/api/print-jobs').then(setPrints, () => {});
+  const loadAll = () => { void loadFamilies(); void loadDrawer(); void loadPrints(); };
   useEffect(() => {
-    void loadFamilies();
-    void loadDrawer();
+    loadAll();
     api<Package[]>('GET', '/api/pos/packages').then(setPackages, () => {});
   }, []);
   useEvents({
     'session.updated': () => void loadFamilies(),
     'order.paid': () => void loadFamilies(),
+    'sync.pulled': () => void loadFamilies(), // an online payment or booking just arrived
+    'print.updated': () => void loadPrints(),
     'photo.updated': (p: PhotoDto) => setPhotos((ps) => ps.map((x) => (x.id === p.id ? p : x))), // ♥ from the family screen
-  });
+  }, loadAll);
+
+  const failedPrints = prints.filter((j) => j.status === 'failed');
+  const retryPrints = async () => {
+    for (const j of failedPrints) await api('POST', `/api/print-jobs/${j.id}/retry`).catch(() => {});
+    void loadPrints();
+  };
 
   async function open(f: Family) {
     setFamily(f);
@@ -108,6 +119,13 @@ export function Cashier({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav
     <div className="flex h-full flex-col">
       <TopBar me={me} onSignOut={onSignOut}>
         {nav}
+        {failedPrints.length > 0 && (
+          // Paper out, printer off, or the app restarted mid-print: staff checks the printer, then sends them again.
+          <button onClick={retryPrints} role="alert" title={failedPrints[0]!.lastError ?? undefined}
+            className="rounded-full border border-brand-500 bg-brand-50 px-3 py-1.5 text-sm font-semibold text-brand-700">
+            ⚠ {failedPrints.length} {t('print.failed')} · {t('print.retry')}
+          </button>
+        )}
         <DrawerControl drawer={drawer} onChange={loadDrawer} />
       </TopBar>
       <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[17rem_1fr_22rem]">

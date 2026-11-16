@@ -17,6 +17,8 @@ export interface DriverHandlers {
   targetFor(originalName: string): string;
   /** The file is fully written at `path`. */
   downloaded(path: string, originalName: string): void;
+  /** The download to `path` (from targetFor) failed; nothing usable was written. */
+  aborted(path: string): void;
   error(err: Error): void;
 }
 

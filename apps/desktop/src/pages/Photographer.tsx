@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, useEvents, type CameraInfo, type Me, type PhotoDto, type SessionRow, type StorageInfo } from '../api';
+import { api, useEvents, type CameraInfo, type Me, type PhotoDto, type SessionRow, type StorageInfo, type SyncInfo } from '../api';
 import { useT } from '../i18n';
 import { TopBar } from './StaffApp';
 
@@ -30,15 +30,18 @@ export function Photographer({ me, onSignOut, nav }: { me: Me; onSignOut(): void
   useEffect(() => { refresh().catch(() => setNotice(t('error.generic'))); }, [refresh]);
   useEffect(() => { api<StorageInfo>('GET', '/api/storage').then(setStorage, () => {}); }, []);
 
+  const reload = () => { refresh().catch(() => setNotice(t('error.generic'))); };
   useEvents({
-    'storage.status': setStorage,
+    // Disk status and cloud status arrive separately: keep the half the event does not carry.
+    'storage.status': (s: StorageInfo) => setStorage((old) => ({ ...s, cloud: old?.cloud })),
+    'sync.status': (c: SyncInfo | null) => setStorage((old) => old && { ...old, cloud: c }),
     'camera.status': (s) => setCamera((c) => (c && c.id === s.cameraId ? { ...c, ...s } : c)),
     'session.updated': () => void refresh(),
     'photo.ready': (p: PhotoDto) => setPhotos((ps) => (p.sessionId === armed?.id && !ps.some((x) => x.id === p.id) ? [...ps, p] : ps)),
     'photo.updated': (p: PhotoDto) => setPhotos((ps) => ps.map((x) => (x.id === p.id ? p : x))),
     'photo.unassigned': () => setNotice(t('photos.unassigned')),
     'photo.failed': (e: { error: string }) => setNotice(e.error),
-  });
+  }, reload);
 
   const act = async (fn: () => Promise<unknown>) => {
     setNotice(null);
@@ -173,6 +176,9 @@ function StoragePill({ storage }: { storage: StorageInfo | null }) {
       <span className={`size-2.5 rounded-full ${dot}`} aria-hidden />
       <span className="font-medium">{label}</span>
       <span className={low ? 'font-semibold text-brand-600' : 'text-slate-500'}>{low ? `${t('storage.low')} · ` : ''}{free}</span>
+      {storage.cloud && !storage.cloud.ok && (
+        <span className="font-semibold text-amber-700" title={storage.cloud.lastError ?? undefined}>· {t('sync.offline')}</span>
+      )}
     </div>
   );
 }

@@ -13,7 +13,8 @@ export function Kiosk() {
   const lastTouch = useRef(0);
   const [pay, setPay] = useState<{ url: string; amountXof: number } | null>(null);
 
-  useEffect(() => { api<KioskState>('GET', '/api/kiosk/state').then(setState, () => {}); }, []);
+  const load = () => { api<KioskState>('GET', '/api/kiosk/state').then(setState, () => {}); };
+  useEffect(load, []);
 
   useEvents({
     'kiosk.state': (s: KioskState) => { setState(s); setSelected(null); },
@@ -27,7 +28,7 @@ export function Kiosk() {
       ...s,
       photos: p.hidden ? s.photos.filter((x) => x.id !== p.id) : s.photos.map((x) => (x.id === p.id ? p : x)),
     })),
-  });
+  }, load);
 
   const touch = () => { lastTouch.current = Date.now(); };
   const toggle = async (p: PhotoDto) => {

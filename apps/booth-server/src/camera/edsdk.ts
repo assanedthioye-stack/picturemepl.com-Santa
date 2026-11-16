@@ -1,3 +1,4 @@
+import { rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import type { CameraDriver, DriverHandlers } from './types';
 
@@ -81,7 +82,8 @@ export class EdsdkDriver implements CameraDriver {
     });
     this.stopWatch = this.api.watchCameras(100); // pumps EDSDK events; downloads happen inside these ticks
     this.connect();
-    this.batteryTimer = setInterval(() => this.readBattery(), 30_000);
+    // Also retries the connection: a camera that was busy (or asleep) at start is picked up without a restart.
+    this.batteryTimer = setInterval(() => (this.camera ? this.readBattery() : this.connect()), 30_000);
   }
 
   private connect(): void {
@@ -111,7 +113,14 @@ export class EdsdkDriver implements CameraDriver {
   private download(file: CanonFile): void {
     const target = this.h.targetFor(file.name);
     // shortcut: synchronous USB transfer (~1 s for RAW+JPEG on a T7) blocks this process; move EDSDK to a worker if it hurts
-    const written = file.downloadToFile(target);
+    let written: string;
+    try {
+      written = file.downloadToFile(target);
+    } catch (e) {
+      rmSync(target, { force: true }); // never leave half a JPEG where the next start would pick it up
+      this.h.aborted(target);
+      throw e;
+    }
     this.h.downloaded(written, file.name);
   }
 

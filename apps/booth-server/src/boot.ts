@@ -34,7 +34,10 @@ export function boothIdOf(db: Db, cloudId?: string): string {
     if (stored && db.select({ id: schema.bookings.id }).from(schema.bookings).where(eq(schema.bookings.boothId, stored)).limit(1).get()) {
       throw new Error(`This booth already has bookings under id ${stored}; PMP_BOOTH_ID ${cloudId} needs a fresh database.`);
     }
-    if (stored) db.update(schema.cameras).set({ boothId: cloudId }).where(eq(schema.cameras.boothId, stored)).run();
+    if (stored) {
+      db.update(schema.cameras).set({ boothId: cloudId }).where(eq(schema.cameras.boothId, stored)).run();
+      db.update(schema.drawerSessions).set({ boothId: cloudId }).where(eq(schema.drawerSessions.boothId, stored)).run();
+    }
     setSetting(db, 'booth_id', cloudId);
     return cloudId;
   }
@@ -97,10 +100,12 @@ export async function startBooth(config: Config, opts: { spooler?: Spooler; lanI
 
   // Wi-Fi may come up after the app: the LAN side retries until the PC has a private address.
   let tls: TlsMaterial | null = null;
+  let stopped = false;
   const tlsDir = path.join(config.dataDir, 'tls');
   const lanReady = new Promise<TlsMaterial>((resolve) => {
     if (!config.lan) return;
     const attempt = async () => {
+      if (stopped) return;
       try {
         resolve((tls = await ensureTls(tlsDir, opts.lanIps)));
       } catch (e) {
@@ -111,12 +116,29 @@ export async function startBooth(config: Config, opts: { spooler?: Spooler; lanI
     void attempt();
   });
   const cloud = config.cloud ? cloudClient(config.cloud) : null;
-  const sync = cloud ? new CloudSync({ db, client: cloud, sessionsDir: config.sessionsDir, onPulled: () => hub.send('sync.pulled', {}) }) : null;
-  const app = createApp({ db, config, hub, boothId, cameras, printQueue, spooler, mirror, get tls() { return tls; }, cloud, syncNow: sync ? () => sync.pull() : undefined });
+  const sync = cloud ? new CloudSync({
+    db, client: cloud, boothId, sessionsDir: config.sessionsDir,
+    onStatus: (s) => hub.send('sync.status', s),
+    onPulled: ({ paidOrders }) => {
+      hub.send('sync.pulled', {});
+      // Mobile Money confirmed while no cashier screen was polling: print and tell the screens.
+      for (const o of paidOrders) hub.send('order.paid', o);
+      if (paidOrders.length) {
+        printQueue.kick();
+        hub.sticky('kiosk.payment', null, ['kiosk']);
+      }
+    },
+  }) : null;
+  const app = createApp({
+    db, config, hub, boothId, cameras, printQueue, spooler, mirror, get tls() { return tls; }, cloud,
+    syncNow: sync ? () => sync.pull() : undefined,
+    syncStatus: () => sync?.status() ?? null,
+  });
   if (!opts.manualSync) sync?.start();
   return {
     app, db, hub, cameras, printQueue, mirror, lanReady, sync,
     async stop() {
+      stopped = true;
       sync?.stop();
       await Promise.all([...cameras.values()].map((c) => c.stop()));
       await mirror.stop();

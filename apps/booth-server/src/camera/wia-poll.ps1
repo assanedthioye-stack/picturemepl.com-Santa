@@ -43,6 +43,7 @@ function Connect-Camera {
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+$fails = @{}
 $baselined = $false
 $device = $null
 $lastStatus = ''
@@ -63,16 +64,27 @@ while ($true) {
       foreach ($it in $files) {
         $id = $it.ItemID
         if ($seen.Contains($id)) { continue }
-        [void]$seen.Add($id)
         # First pass only learns what is already on the card; those shots belong to nobody.
-        if (-not $baselined) { continue }
+        if (-not $baselined) { [void]$seen.Add($id); continue }
         $base = Get-Prop $it.Properties 'Item Name'
         $ext = Get-Prop $it.Properties 'Filename extension'
         $name = "$base.$ext"
-        $dest = Join-Path $OutDir ("wia-{0}-{1}" -f [DateTime]::UtcNow.Ticks, $name)
-        $img = $it.Transfer()   # native format: JPG stays JPG, CR2 stays CR2
-        $img.SaveFile($dest)
-        Emit @{ type = 'file'; path = $dest; name = $name }
+        try {
+          $dest = Join-Path $OutDir ("wia-{0}-{1}" -f [DateTime]::UtcNow.Ticks, $name)
+          $img = $it.Transfer()   # native format: JPG stays JPG, CR2 stays CR2
+          $img.SaveFile($dest)
+          # Marked as done only once it is safely on disk: a failed transfer is retried on the next pass.
+          [void]$seen.Add($id)
+          Emit @{ type = 'file'; path = $dest; name = $name }
+        } catch {
+          $fails[$id] = 1 + [int]$fails[$id]
+          if ($fails[$id] -ge 5) {
+            [void]$seen.Add($id)   # give up on this one file instead of retrying for ever
+            Emit @{ type = 'error'; message = "Transfert impossible pour $name (abandon) : $($_.Exception.Message)" }
+          } else {
+            Emit @{ type = 'error'; message = "Transfert de $name en echec, nouvel essai : $($_.Exception.Message)" }
+          }
+        }
       }
       $baselined = $true
     }
