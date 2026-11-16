@@ -120,7 +120,7 @@ The booth PC serves the staff app to **paired** devices over HTTPS on port 4443 
 | 4x6, 5x7 | name containing `DS620` (DNP DS620A) |
 | 8x10, custom | name containing `PIXMA` |
 
-Each job becomes a one-page PDF at the exact paper size (300 dpi, EXIF-rotated, centre-cropped) and goes to the Windows spooler through SumatraPDF (bundled with `pdf-to-printer`), with no dialog. Only lines of **paid** orders print, up to the paid quantity. A job interrupted mid-print is marked failed (never auto-reprinted).
+Each job becomes a one-page PDF at the exact paper size (300 dpi, EXIF-rotated, centre-cropped) and goes to the Windows spooler through SumatraPDF (bundled with `pdf-to-printer`), with no dialog. Only lines of **paid** orders print, up to the paid quantity. A job interrupted mid-print is marked failed (never auto-reprinted). Failed jobs show as a red pill on the Cashier screen; **Relancer** sends them again once the printer is fixed.
 
 DNP tip: add the DS620A twice in Windows with different default paper ("DNP DS620A" = 4x6, "DNP DS620A 5x7" = 5x7), then set `print.printer.5x7 = DNP DS620A 5x7` in `settings`. Optional `print.paper.<size>` passes a driver paper name. `GET /api/printers` shows what each size resolves to.
 
@@ -208,6 +208,24 @@ pnpm dev:web
 `pnpm dev:cloud` accepts fake payments (approved instantly; a phone ending in 0000 is refused).
 
 **Tests:** `pnpm test` needs a Postgres the tests can create throwaway databases on (`TEST_DATABASE_ADMIN_URL`, default `postgres://pmp:pmp@127.0.0.1/postgres`).
+
+## Reliability rules (audit, November 2026)
+
+What the system guarantees, and what staff will see:
+
+- **Nobody pays twice.** Before the cashier takes cash, types a manual reference, starts another Mobile Money request or rebuilds the cart, the booth asks the cloud about any phone payment still pending for that family. If it went through, the order is closed as paid and the second payment is refused ("Cette commande vient d'être payée").
+- **Money that arrives late is kept as credit.** A phone payment confirmed after the cart was replaced shows as *Prépayé en ligne* on the family; the next cart is reduced by that amount. There is no refund flow in the app.
+- **Online orders belong to the cloud.** A cart built at the till never cancels a booking or gallery purchase being paid on a phone, and a booth can never change another booth's rows.
+- **A lost network answer is not a lost payment.** The payment is recorded on the booth before the request leaves; if no answer comes back the cashier sees "Réponse du réseau perdue" while the booth finds out what happened.
+- **Sync never gets stuck on one bad row,** and never skips an online booking made while another was being saved. Uploads retry for as long as the network is down. *Cloud hors ligne* appears on the Photographer screen when the cloud cannot be reached.
+- **Queue:** a family marked *Parti* rejoins the queue when their code is scanned again; the same family cannot be queued twice.
+- **Photos:** a photo that has been sold cannot be hidden. Photos that finish processing after the shoot is closed still reach the online gallery.
+- **Public site limits:** 2 unpaid slot holds per phone number; the gallery locks after 5 wrong PINs in 15 minutes; payment pages stop checking after 5 minutes and say so.
+- **Booth PC:** if the booth server crashes it restarts and the screens reload. If it cannot start at all (port in use, damaged disk), an error box appears after 5 tries instead of an empty screen.
+
+Upgrading an existing cloud: `supabase db push` applies `20261116000000_sync_order.sql` (ordering lock for sync, attempt ids for the PIN limit). Deploy it before the new function.
+
+`pnpm typecheck` also runs as the linter: unused code, missing returns, switch fall-through and implicit overrides fail the build.
 
 ## Security notes
 

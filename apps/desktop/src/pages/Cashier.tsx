@@ -121,10 +121,13 @@ export function Cashier({ me, onSignOut, nav }: { me: Me; onSignOut(): void; nav
         {nav}
         {failedPrints.length > 0 && (
           // Paper out, printer off, or the app restarted mid-print: staff checks the printer, then sends them again.
-          <button onClick={retryPrints} role="alert" title={failedPrints[0]!.lastError ?? undefined}
-            className="rounded-full border border-brand-500 bg-brand-50 px-3 py-1.5 text-sm font-semibold text-brand-700">
-            ⚠ {failedPrints.length} {t('print.failed')} · {t('print.retry')}
-          </button>
+          // The alert wraps the button: role="alert" on the button itself would hide it as a button from screen readers.
+          <span role="alert">
+            <button onClick={retryPrints} title={failedPrints[0]!.lastError ?? undefined}
+              className="rounded-full border border-brand-500 bg-brand-50 px-3 py-1.5 text-sm font-semibold text-brand-700">
+              ⚠ {failedPrints.length} {t('print.failed')} · {t('print.retry')}
+            </button>
+          </span>
         )}
         <DrawerControl drawer={drawer} onChange={loadDrawer} />
       </TopBar>

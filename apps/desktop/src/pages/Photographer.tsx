@@ -90,12 +90,14 @@ export function Photographer({ me, onSignOut, nav }: { me: Me; onSignOut(): void
 
         <main className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4">
           {incoming && !armed && (
-            <button onClick={() => setIncoming(null)} role="alert"
-              className="pop-in flex items-center gap-4 rounded-2xl border-2 border-brand-500 bg-brand-50 p-4 text-left">
-              <span className="text-sm font-semibold uppercase tracking-wide text-brand-700">{t('ph.new')}</span>
-              <span className="text-2xl font-bold">{incoming.familyName}</span>
-              <span className="font-mono text-2xl font-bold tracking-widest text-brand-700">{incoming.code}</span>
-            </button>
+            <div role="alert">
+              <button onClick={() => setIncoming(null)}
+                className="pop-in flex w-full items-center gap-4 rounded-2xl border-2 border-brand-500 bg-brand-50 p-4 text-left">
+                <span className="text-sm font-semibold uppercase tracking-wide text-brand-700">{t('ph.new')}</span>
+                <span className="text-2xl font-bold">{incoming.familyName}</span>
+                <span className="font-mono text-2xl font-bold tracking-widest text-brand-700">{incoming.code}</span>
+              </button>
+            </div>
           )}
           {armed && (
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl bg-slate-900 p-4 text-white">
