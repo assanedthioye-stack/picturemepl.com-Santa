@@ -3,8 +3,12 @@ import postgres from 'postgres';
 export interface Q {
   query<T = Record<string, any>>(text: string, params?: unknown[]): Promise<T[]>;
 }
+/** Inside a transaction. `savepoint` isolates a step: if it throws, only that step is rolled back. */
+export interface Tx extends Q {
+  savepoint<T>(fn: (q: Tx) => Promise<T>): Promise<T>;
+}
 export interface Db extends Q {
-  tx<T>(fn: (q: Q) => Promise<T>): Promise<T>;
+  tx<T>(fn: (q: Tx) => Promise<T>): Promise<T>;
   end(): Promise<void>;
 }
 
@@ -20,9 +24,11 @@ export function pgDb(url: string): Db {
   const q = (s: { unsafe: typeof sql.unsafe }): Q => ({
     query: async (text, params = []) => [...(await s.unsafe(text, params as never[]))] as never,
   });
+  // postgres.js fails the whole transaction for any query error, even a caught one, unless it happened in its own savepoint scope.
+  const inTx = (t: any): Tx => ({ ...q(t), savepoint: (fn) => t.savepoint((sp: unknown) => fn(inTx(sp))) });
   return {
     ...q(sql),
-    tx: (fn) => sql.begin((t) => fn(q(t as unknown as typeof sql))) as never,
+    tx: (fn) => sql.begin((t) => fn(inTx(t))) as never,
     end: () => sql.end(),
   };
 }

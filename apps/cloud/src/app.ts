@@ -3,11 +3,11 @@ import { cors } from 'hono/cors';
 import { z, ZodError } from 'zod';
 import { COUNTRIES, normalizePhone, ONLINE_CODES, packageId, PRICE_LIST, type Country } from '@pmp/shared';
 import type { Db } from './db';
-import { PayError, refreshPayment, startPayment, type PaymentsConfig } from './payments/service';
+import { PayError, refreshPayment, refreshPendingOf, startPayment, type PaymentsConfig } from './payments/service';
 import type { Method } from './payments/types';
 import { hashPin, verifyPin } from './pin';
 import type { Storage } from './storage';
-import { applyBoothRow, pullForBooth } from './sync';
+import { applyBoothRow, applyBoothRowSafely, pullForBooth } from './sync';
 import { newId, randomDigits, randomToken, sha256Hex, signToken, verifyToken } from './util';
 
 export interface CloudDeps {
@@ -21,6 +21,8 @@ export interface CloudDeps {
 }
 
 const HOLD_MS = 15 * 60_000;
+const MAX_HOLDS_PER_PHONE = 2;
+const MAX_PIN_FAILS = 5;
 const VAT_BP = 1800; // 18 % in SN, BJ and CI
 const MOMO = ['wave', 'orange_money', 'mtn_momo', 'celtiis_cash'] as const;
 const LIVE = `('confirmed','checked_in','in_session','shot_complete','completed')`;
@@ -49,6 +51,7 @@ export function createCloudApp(d: CloudDeps): Hono {
   app.onError((err, c) => {
     if (err instanceof PayError) return c.json({ error: err.message }, err.status as 400);
     if (err instanceof ZodError) return c.json({ error: 'invalid', issues: err.issues }, 400);
+    if (err instanceof SyntaxError) return c.json({ error: 'invalid_json' }, 400); // malformed request body
     console.error(err);
     return c.json({ error: 'internal' }, 500);
   });
@@ -102,15 +105,20 @@ export function createCloudApp(d: CloudDeps): Hono {
     const b = NewBooking.parse(await c.req.json());
     const phone = normalizePhone(b.phoneCountry, b.phone);
     if (!phone) throw new PayError(400, 'invalid_phone');
+    const now = Date.now();
+    // One phone cannot sit on many unpaid slots (each hold blocks a place for 15 minutes).
+    const [{ holds }] = await db.query<{ holds: number }>(
+      `select count(*) as holds from bookings b join customers c on c.id = b.customer_id
+       where c.phone = $1 and b.status = 'pending_payment' and b.hold_expires_at > $2`, [phone, now]) as [{ holds: number }];
+    if (holds >= MAX_HOLDS_PER_PHONE) throw new PayError(429, 'too_many_pending');
     const pin = randomDigits(6);
     const pinHash = await hashPin(pin);
-    const now = Date.now();
     const out = await db.tx(async (t) => {
       // Lock the slot row: two families can never take the last place at the same time.
       const [slot] = await t.query<{ id: string; booth_id: string; event_id: string; country: Country; capacity: number; starts_at: number }>(
         `select s.id, s.booth_id, bo.event_id, v.country, s.capacity, s.starts_at
          from time_slots s join booths bo on bo.id = s.booth_id join events e on e.id = bo.event_id join venues v on v.id = e.venue_id
-         where s.id = $1 for update of s`, [b.slotId]);
+         where s.id = $1 and v.active and e.status in ('published', 'live') for update of s`, [b.slotId]);
       if (!slot) throw new PayError(404, 'slot_not_found');
       if (slot.starts_at < now) throw new PayError(409, 'slot_past');
       const [{ taken }] = await t.query<{ taken: number }>(
@@ -146,9 +154,7 @@ export function createCloudApp(d: CloudDeps): Hono {
   /** Ticket + gallery page data. Polling it also re-checks a pending payment (covers late webhooks). */
   app.get('/api/bookings/:token', async (c) => {
     const bk = await bookingByToken(db, c.req.param('token'));
-    const [pending] = await db.query<{ id: string }>(
-      `select p.id from payments p join orders o on o.id = p.order_id where o.booking_id = $1 and p.status = 'pending' order by p.created_at desc limit 1`, [bk.id]);
-    if (pending) await refreshPayment(db, d.payments, pending.id).catch((e) => console.error('refresh failed', e));
+    await refreshPendingOf(db, d.payments, { bookingId: bk.id });
     const [fresh] = await db.query<Record<string, any>>(
       `select b.status, b.code, b.package_id, b.party_size, c.full_name, s.starts_at, v.name as venue, v.city, v.country,
               (select o.total_xof from orders o where o.booking_id = b.id and o.channel = 'online'
@@ -171,15 +177,21 @@ export function createCloudApp(d: CloudDeps): Hono {
     const bk = await bookingByToken(db, c.req.param('token'));
     if (bk.status !== 'pending_payment') throw new PayError(409, `booking_${bk.status}`);
     const now = Date.now();
-    // Hold expired? Take it again only if the slot still has room.
-    if (!bk.hold_expires_at || bk.hold_expires_at < now) {
-      const [{ free }] = await db.query<{ free: number }>(
-        `select s.capacity - (select count(*) from bookings x where x.slot_id = s.id and x.id <> $2
-            and (x.status in ${LIVE} or (x.status = 'pending_payment' and x.hold_expires_at > $3))) as free
-         from time_slots s where s.id = $1`, [bk.slot_id, bk.id, now]) as [{ free: number }];
-      if (free <= 0) throw new PayError(409, 'slot_full');
-      await db.query('update bookings set hold_expires_at = $2, updated_at = $3 where id = $1', [bk.id, now + HOLD_MS, now]);
-    }
+    await db.tx(async (t) => {
+      // Same lock as booking creation: re-taking an expired hold can never overbook the slot.
+      const [slot] = await t.query<{ capacity: number }>('select capacity from time_slots where id = $1 for update', [bk.slot_id]);
+      const [cur] = await t.query<{ status: string; hold_expires_at: number | null }>('select status, hold_expires_at from bookings where id = $1', [bk.id]);
+      if (!slot || !cur) throw new PayError(404, 'slot_not_found');
+      if (cur.status !== 'pending_payment') throw new PayError(409, `booking_${cur.status}`);
+      if (!cur.hold_expires_at || cur.hold_expires_at < now) {
+        const [{ taken }] = await t.query<{ taken: number }>(
+          `select count(*) as taken from bookings x where x.slot_id = $1 and x.id <> $2
+             and (x.status in ${LIVE} or (x.status = 'pending_payment' and x.hold_expires_at > $3))`, [bk.slot_id, bk.id, now]) as [{ taken: number }];
+        if (taken >= slot.capacity) throw new PayError(409, 'slot_full');
+      }
+      // Paying takes a few minutes on a phone: the hold restarts so the place is not sold meanwhile.
+      await t.query('update bookings set hold_expires_at = $2, updated_at = $3 where id = $1', [bk.id, now + HOLD_MS, now]);
+    });
     const [order] = await db.query<{ id: string }>(
       `select o.id from orders o where o.booking_id = $1 and o.status = 'open' and exists (select 1 from order_items i where i.order_id = o.id and i.kind = 'bundle')`, [bk.id]);
     if (!order) throw new PayError(409, 'order_not_open');
@@ -196,12 +208,14 @@ export function createCloudApp(d: CloudDeps): Hono {
     const { pin } = z.object({ pin: z.string().regex(/^\d{6}$/) }).parse(await c.req.json());
     const bk = await bookingByToken(db, c.req.param('token'));
     const now = Date.now();
+    // Record the attempt BEFORE checking the PIN: parallel guesses all count, so the limit cannot be raced.
+    const attemptId = newId();
+    await db.query('insert into gallery_attempts (id, booking_id, at, ok) values ($1, $2, $3, false)', [attemptId, bk.id, now]);
     const [{ fails }] = await db.query<{ fails: number }>(
       'select count(*) as fails from gallery_attempts where booking_id = $1 and not ok and at > $2', [bk.id, now - 15 * 60_000]) as [{ fails: number }];
-    if (fails >= 5) throw new PayError(429, 'too_many_attempts');
-    const ok = await verifyPin(pin, bk.pin_hash);
-    await db.query('insert into gallery_attempts (booking_id, at, ok) values ($1, $2, $3)', [bk.id, now, ok]);
-    if (!ok) throw new PayError(401, 'wrong_pin');
+    if (fails > MAX_PIN_FAILS) throw new PayError(429, 'too_many_attempts');
+    if (!(await verifyPin(pin, bk.pin_hash))) throw new PayError(401, 'wrong_pin');
+    await db.query('update gallery_attempts set ok = true where id = $1', [attemptId]);
     return c.json({ session: await signToken(d.secret, `g:${bk.id}`, 2 * 3600) });
   });
 
@@ -227,6 +241,8 @@ export function createCloudApp(d: CloudDeps): Hono {
     const ids = [...new Set(p.photoIds)];
     const owned = new Set((await db.query<{ id: string }>('select id from photos where booking_id = $1 and not hidden and id = any($2)', [bk.id, ids])).map((r) => r.id));
     if (owned.size !== ids.length) throw new PayError(400, 'photo_not_in_booking');
+    // A purchase made a moment ago may not be confirmed yet: ask the provider before selling the same photos again.
+    await refreshPendingOf(db, d.payments, { bookingId: bk.id }, { force: true });
     const unlocked = await entitledPhotoIds(db, bk.id);
     if (ids.some((id) => unlocked.has(id))) throw new PayError(409, 'already_unlocked');
     const unit = priceOf('numerique', bk.country)!;
@@ -257,7 +273,8 @@ export function createCloudApp(d: CloudDeps): Hono {
   app.get('/api/webhooks/cinetpay', (c) => c.text('ok')); // CinetPay pings the URL
   app.post('/api/webhooks/cinetpay', async (c) => {
     const ct = c.req.header('content-type') ?? '';
-    const body = ct.includes('json') ? await c.req.json() : Object.fromEntries(await c.req.formData());
+    // Providers retry on anything but 200: an unreadable body is answered "ok" and ignored.
+    const body = await (ct.includes('json') ? c.req.json() : c.req.formData().then((f) => Object.fromEntries(f))).catch(() => ({}));
     const id = String((body as Record<string, unknown>).cpm_trans_id ?? '');
     const [p] = await db.query<{ id: string }>(`select id from payments where id = $1 and provider = 'cinetpay'`, [id]);
     await hint(p?.id);
@@ -299,14 +316,17 @@ export function createCloudApp(d: CloudDeps): Hono {
     const booth = c.get('booth');
     const refused: number[] = [];
     await db.tx(async (t) => {
-      for (const [i, r] of rows.entries()) if (!(await applyBoothRow(t, booth.id, r.tbl, r.row))) refused.push(i);
+      for (const [i, r] of rows.entries()) if (!(await applyBoothRowSafely(t, booth.id, r.tbl, r.row))) refused.push(i);
     });
     return c.json({ accepted: rows.length - refused.length, refused });
   });
 
   sync.get('/pull', async (c) => {
     const since = Number(c.req.query('since') ?? 0) || 0;
-    return c.json(await pullForBooth(db, c.get('booth').id, since));
+    return c.json(await db.tx(async (t) => {
+      await t.query('set transaction isolation level repeatable read read only'); // one snapshot for all tables
+      return pullForBooth(t, c.get('booth').id, since);
+    }));
   });
 
   const UploadReq = z.object({ photoId: z.string(), kind: z.enum(['thumb', 'preview', 'deliverable']) });

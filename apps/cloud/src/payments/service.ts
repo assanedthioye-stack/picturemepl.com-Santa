@@ -39,20 +39,42 @@ export interface StartInput {
   receivedBy?: string | null;
 }
 
+/**
+ * Asks the provider about every payment of these orders that is still pending (newest first, a few at most).
+ * Called before anything that could make the customer pay again.
+ */
+export async function refreshPendingOf(db: Db, cfg: PaymentsConfig, where: { orderId: string } | { bookingId: string }, o: { force?: boolean } = {}): Promise<void> {
+  const rows = 'orderId' in where
+    ? await db.query<{ id: string }>(`select id from payments where order_id = $1 and status = 'pending' order by created_at desc limit 3`, [where.orderId])
+    : await db.query<{ id: string }>(
+      `select p.id from payments p join orders o on o.id = p.order_id where o.booking_id = $1 and p.status = 'pending' order by p.created_at desc limit 3`, [where.bookingId]);
+  for (const r of rows) {
+    // A provider outage must not block the page; the payment simply stays pending.
+    await refreshPayment(db, cfg, r.id, o).catch((e) => console.error('payment refresh failed', r.id, (e as Error).message));
+  }
+}
+
 /** Creates the pending payment for the order's total and asks the provider to collect it. */
 export async function startPayment(db: Db, cfg: PaymentsConfig, i: StartInput): Promise<InitResult & { paymentId: string; provider: ProviderId }> {
   const provider = providerFor(cfg, i.country, i.method);
+  // An earlier attempt may have gone through without us knowing yet: never open a second charge before asking.
+  await refreshPendingOf(db, cfg, { orderId: i.orderId }, { force: true });
   const [order] = await db.query<{ total_xof: number; status: string }>('select total_xof, status from orders where id = $1', [i.orderId]);
   if (!order) throw new PayError(404, 'order_not_found');
   if (order.status !== 'open') throw new PayError(409, `order_${order.status}`);
   if (order.total_xof <= 0) throw new PayError(409, 'nothing_to_pay');
   const id = i.paymentId ?? newId();
   const now = Date.now();
-  await db.query(
-    `insert into payments (id, order_id, method, provider, idempotency_key, amount_xof, payer_phone, status, received_by, created_at, updated_at)
-     values ($1, $2, $3, $4, $1, $5, $6, 'pending', $7, $8, $8)`,
-    [id, i.orderId, i.method, provider.id, order.total_xof, i.phone ?? null, i.receivedBy ?? null, now],
-  );
+  try {
+    await db.query(
+      `insert into payments (id, order_id, method, provider, idempotency_key, amount_xof, payer_phone, status, received_by, created_at, updated_at)
+       values ($1, $2, $3, $4, $1, $5, $6, 'pending', $7, $8, $8)`,
+      [id, i.orderId, i.method, provider.id, order.total_xof, i.phone ?? null, i.receivedBy ?? null, now],
+    );
+  } catch (e) {
+    if ((e as { code?: string }).code === '23505') throw new PayError(409, 'payment_exists'); // same id sent twice
+    throw e;
+  }
   try {
     const r = await provider.init({
       paymentId: id, amountXof: order.total_xof, method: i.method, country: i.country, phone: i.phone,
@@ -87,13 +109,20 @@ export async function refreshPayment(db: Db, cfg: PaymentsConfig, paymentId: str
   const provider = cfg.providers[p.provider];
   if (!provider) return p;
 
-  const r = await provider.check(p.id, p.provider_ref);
+  let r;
+  try {
+    r = await provider.check(p.id, p.provider_ref);
+  } catch (e) {
+    console.error('provider check failed', p.id, (e as Error).message);
+    throw new PayError(502, 'provider_error');
+  }
   const now = Date.now();
   let status = r.status;
   let note: string | undefined;
   // The sandbox charges EUR with the same number; elsewhere an amount mismatch is never accepted.
   if (status === 'succeeded' && r.amountXof !== undefined && r.amountXof !== p.amount_xof) { status = 'pending'; note = 'amount_mismatch'; }
   await db.tx(async (t) => {
+    // "where status = 'pending'": of two concurrent checks, only one settles the order.
     const changed = await t.query<{ id: string }>(
       `update payments set status = $2, operator_ref = coalesce($3, operator_ref), provider_data = $4, last_checked_at = $5,
          confirmed_at = case when $2 = 'succeeded' then $5 else confirmed_at end, updated_at = $5
@@ -110,6 +139,7 @@ export async function refreshPayment(db: Db, cfg: PaymentsConfig, paymentId: str
 async function settleOrder(t: Q, orderId: string, now: number): Promise<void> {
   const [o] = await t.query<{ booking_id: string }>(
     `update orders set status = 'paid', paid_at = $2, updated_at = $2 where id = $1 and status = 'open' returning booking_id`, [orderId, now]);
+  // Order already paid or void: the money still shows up for the booth as credit on this booking (payments are pulled).
   if (!o) return;
   // A late payment after the 15-minute hold still confirms: the money is taken, so the slot is honoured.
   await t.query(
