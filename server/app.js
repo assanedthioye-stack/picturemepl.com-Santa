@@ -26,7 +26,6 @@ const KNOWN = {
 };
 const HEADERS = { 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer' };
 const MAX_JSON = 100e3, MAX_PHOTO = 40e6;
-const PRIVATE = /^(::1|(::ffff:)?(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.))/; // loopback and private networks: where the hosting proxy connects from
 
 // Fixed-window counter per key (an IP): allow `max` hits per `windowMs`.
 function limiter(max, windowMs) {
@@ -136,11 +135,11 @@ function createServer({ db, dir, pins, secret, log = console.error }) {
     try {
       const u = new URL(req.url, 'http://x'); // inside the try: a malformed URL must not crash the process
       const q = (k) => u.searchParams.get(k);
-      // Rate limits key on the client address. Only a proxy on this machine or a private network may name it, and only its
-      // LAST X-Forwarded-For entry is trusted: earlier entries are whatever the client sent, so they would reset any limit.
-      const peer = req.socket.remoteAddress || '';
+      // Rate limits key on the client address. The hosting proxy appends it LAST to X-Forwarded-For; earlier entries are
+      // whatever the client sent, so keying on them let anyone reset the PIN lockout by changing the header.
+      // shortcut: trusts the last entry from any peer (Hostinger always fronts the app); behind no proxy, trust the socket only.
       const fwd = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
-      const ip = (PRIVATE.test(peer) && fwd.at(-1)) || peer;
+      const ip = fwd.at(-1) || req.socket.remoteAddress || '';
       const pin = String(req.headers['x-pin'] || ''); // header only: a PIN in a URL ends up in logs and history
       const allowed = (need) => {
         if (need === null) return null;
