@@ -19,7 +19,7 @@ function price(db, code, items) {
 }
 
 function saveCart(db, code, items, photoFiles = []) {
-  if (!Array.isArray(items) || !Array.isArray(photoFiles) || items.length > 20) throw new Error('bad item: cart');
+  if (!Array.isArray(items) || !Array.isArray(photoFiles) || items.length > 20) throw new Error('bad item');
   return tx(db, () => {
     const have = gallery(db, code);
     if (!have) throw new Error('unknown code');
@@ -53,6 +53,8 @@ function pay(db, code, /** @type {any} */ p, now = new Date()) {
       if (!Number.isSafeInteger(p.amountReceived) || p.amountReceived < total) throw bad();
     } else if (p.method === 'mobile_money') {
       if (!PROVIDERS[countryOf(db, code)].includes(p.provider) || !reference) throw bad();
+      // One operator receipt pays one order: a reused reference would record money that was received only once.
+      if (db.prepare('SELECT 1 FROM orders WHERE provider=? AND upper(reference)=upper(?) AND paid_at IS NOT NULL').get(p.provider, reference)) throw new Error('reference used');
     } else throw bad();
     const momo = p.method === 'mobile_money';
     // A digital purchase gets a private, unguessable link for the family. It is the only way a non-admin receives a clean file.

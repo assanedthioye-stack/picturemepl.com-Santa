@@ -17,13 +17,16 @@ async function tick() {
     const job = await res.json();
     if (job) {
       const out = path.join(hot, path.basename(job.code));
+      const marker = path.join(out, 'order.json');
       fs.mkdirSync(out, { recursive: true });
-      for (const f of job.files) {
+      // order.json is written last: if it exists, the photos are already in the hot folder (and printing), and only the
+      // "printed" call failed last time. Copying them again would print the order twice.
+      if (!fs.existsSync(marker)) for (const f of job.files) {
         const r = await fetch(`${url}/api/print/file?code=${encodeURIComponent(job.code)}&file=${encodeURIComponent(f)}`, { headers: h });
         if (!r.ok) throw new Error(`could not fetch ${f}: ${r.status}`);
         fs.writeFileSync(path.join(out, path.basename(f)), Buffer.from(await r.arrayBuffer()));
       }
-      fs.writeFileSync(path.join(out, 'order.json'), JSON.stringify(job.lines, null, 2));
+      if (!fs.existsSync(marker)) fs.writeFileSync(marker, JSON.stringify(job.lines, null, 2));
       const done = await fetch(`${url}/api/print/done`, { method: 'POST', headers: h, body: JSON.stringify({ code: job.code }) });
       if (!done.ok) throw new Error('could not mark printed: ' + done.status);
       console.log('queued for print', job.code);
